@@ -451,12 +451,14 @@ const aggregateClient = (
         ...Telemetry.attributesOf(command.constructor, command),
       });
       const trace = yield* Telemetry.currentTrace;
+      const after = yield* Telemetry.causeClock;
       return {
         id: Aggregate.targetId(target),
         meta: {
           commandId,
           context,
           correlationId,
+          ...(after !== undefined ? { after } : {}),
           ...(trace ? { trace } : {}),
           ...(link ? { link } : {}),
         },

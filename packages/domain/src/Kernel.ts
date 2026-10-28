@@ -85,6 +85,7 @@ const jsonCodec = (schema: Schema.Top): JsonCodec => {
 export const encodeEnvelope = (
   envelope: Aggregate.Envelope,
   trace?: Telemetry.TraceJson,
+  clock?: number,
 ): EnvelopeJson => ({
   id: envelope.id,
   stream: envelope.stream,
@@ -92,6 +93,7 @@ export const encodeEnvelope = (
   at: DateTime.toEpochMillis(envelope.at),
   commandId: envelope.commandId,
   correlationId: envelope.correlationId,
+  ...(clock !== undefined ? { clock } : {}),
   ...(trace ? { trace } : {}),
 });
 
@@ -649,7 +651,9 @@ const build = (
       history: boolean,
       correlationId: string = commandId,
       trace?: Telemetry.TraceJson,
+      after?: number,
     ) => {
+      const first = CatchUp.stamp(DateTime.toEpochMillis(now), after);
       const stream = `${aggregate.aggregateName}/${id}`;
       const events: Array<StoredEvent> = [];
       const deliveries: Array<Delivery> = [];
@@ -676,7 +680,7 @@ const build = (
         );
         const stored: StoredEvent = {
           event: encodeEvent(event),
-          envelope: encodeEnvelope(envelope, trace),
+          envelope: encodeEnvelope(envelope, trace, first + index),
         };
         events.push(stored);
         deliveries.push(
@@ -709,7 +713,7 @@ const build = (
           targets,
           input,
           (row) => row.envelope.seq,
-          (row) => row.envelope.at,
+          (row) => CatchUp.positionOf(row.envelope) / CatchUp.TICKS,
           (row, only) =>
             fanOut(
               {
@@ -744,6 +748,9 @@ const build = (
           DateTime.makeUnsafe(input.now),
           input.commandId,
           true,
+          undefined,
+          undefined,
+          input.after,
         );
         return {
           state: codecs.state.encode(result.next),
@@ -819,6 +826,7 @@ const build = (
             false,
             correlationId,
             trace,
+            input.after,
           );
           const replyFn = (def.reply as Record<string, (...args: any[]) => unknown> | undefined)?.[
             decoded._tag
@@ -918,7 +926,7 @@ const build = (
           targets,
           input,
           (row) => row.seq,
-          (row) => row.envelope.at,
+          (row) => CatchUp.positionOf(row.envelope) / CatchUp.TICKS,
           (row, only) =>
             fanOut(
               {
@@ -972,7 +980,7 @@ const build = (
       apply: (key, snapshot, batch) => {
         let current: unknown =
           codec && snapshot.state !== null ? codec.decode(snapshot.state) : null;
-        let { version, seq } = snapshot;
+        let { version, seq, clock } = snapshot;
         const checkpoints: Record<string, number> = { ...snapshot.checkpoints };
         let changed = false;
         const entries: Array<ViewEntry> = [];
@@ -1020,6 +1028,10 @@ const build = (
                 );
               }
               seq += 1;
+              // An entry is a new event on the key: its clock rises with `seq`
+              // and is never below its input's, so it sorts after its cause.
+              const input = CatchUp.positionOf(delivery.envelope);
+              clock = clock === undefined ? input : Math.max(input, clock + 1);
               const outEnvelope: Aggregate.Envelope = {
                 id: key,
                 stream,
@@ -1031,7 +1043,7 @@ const build = (
               const entry: ViewEntry = {
                 seq,
                 event: encodeEvent(out),
-                envelope: encodeEnvelope(outEnvelope, delivery.envelope.trace),
+                envelope: encodeEnvelope(outEnvelope, delivery.envelope.trace, clock),
                 state: encodeState(current),
               };
               entries.push(entry);
@@ -1053,7 +1065,13 @@ const build = (
             }
           }
         }
-        const next: ViewSnapshot = { state: encodeState(current), version, checkpoints, seq };
+        const next: ViewSnapshot = {
+          state: encodeState(current),
+          version,
+          checkpoints,
+          seq,
+          ...(clock !== undefined ? { clock } : {}),
+        };
         return { snapshot: next, changed, entries, downstream };
       },
     };
@@ -1086,7 +1104,12 @@ const build = (
             return handler({ key, route, source, event, envelope, state }).pipe(
               Effect.provideContext(
                 Context.make(Aggregate.PolicyRun, { next: () => `${prefix}:${n++}` }).pipe(
-                  Context.add(Telemetry.Correlation, { id: envelope.correlationId }),
+                  Context.add(Telemetry.Correlation, {
+                    id: envelope.correlationId,
+                    ...(delivery.envelope.clock !== undefined
+                      ? { clock: delivery.envelope.clock }
+                      : {}),
+                  }),
                 ),
               ),
             );

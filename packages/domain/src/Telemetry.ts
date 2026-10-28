@@ -66,9 +66,20 @@ export const spanOf = (trace: TraceJson): Tracer.ExternalSpan =>
  *
  * @internal
  */
-export class Correlation extends Context.Service<Correlation, { readonly id: string }>()(
-  "alchemy/Domain/Correlation",
-) {}
+export class Correlation extends Context.Service<
+  Correlation,
+  {
+    readonly id: string;
+    /** The clock of the event that caused the work, if any (see `CatchUp.TICKS`). */
+    readonly clock?: number;
+  }
+>()("alchemy/Domain/Correlation") {}
+
+/** The clock of the event that caused a new command, if any. @internal */
+export const causeClock: Effect.Effect<number | undefined> = Effect.map(
+  Effect.serviceOption(Correlation),
+  (c) => (Option.isSome(c) ? c.value.clock : undefined),
+);
 
 /** The correlation id for a new command: the one it was caused by, else its own id. @internal */
 export const correlationFor = (commandId: string): Effect.Effect<string> =>

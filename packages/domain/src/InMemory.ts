@@ -7,7 +7,7 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import { WorkflowEngine } from "effect/workflow";
 import type * as Aggregate from "./Aggregate.ts";
 import { AlreadyCancelled, AlreadyExecuted, NotScheduled } from "./Aggregate.ts";
-import { earliest, laggingFrom, routeLive, type Routed } from "./CatchUp.ts";
+import { earliest, laggingFrom, mergeBySource, routeLive, type Routed } from "./CatchUp.ts";
 import * as InMemoryWorkflows from "./InMemoryWorkflows.ts";
 import {
   type Accepted,
@@ -115,9 +115,24 @@ export const make = (
     string,
     {
       readonly ids: () => ReadonlyArray<string>;
-      readonly catchUp: (id: string, until: number) => Effect.Effect<number | undefined>;
+      /** The lock its commits hold: a round holds every source's lock. */
+      readonly lock: Semaphore.Semaphore;
+      /**
+       * Replay one instance's lagging rows before `until` and move its cursors
+       * past them. The caller holds `lock` and enqueues `work`.
+       */
+      readonly catchUp: (
+        id: string,
+        until: number,
+      ) => Effect.Effect<{
+        readonly next: number | undefined;
+        readonly work: ReadonlyArray<readonly [Delivery, (d: Delivery) => Effect.Effect<void>]>;
+      }>;
     }
   >();
+  const latest = (a: number | undefined, b: number | undefined) =>
+    a === undefined ? b : b === undefined ? a : Math.max(a, b);
+  type Work = readonly [Delivery, (d: Delivery) => Effect.Effect<void>];
   const window = Duration.toMillis(Duration.fromInputUnsafe(options.catchUpWindow ?? "1 hour"));
   /**
    * Replay history to lagging consumers in rounds: each round replays every
@@ -127,10 +142,28 @@ export const make = (
   const sweep: Effect.Effect<void> = Effect.gen(function* () {
     let until = Number.NEGATIVE_INFINITY;
     while (true) {
-      let next: number | undefined;
-      for (const source of sources.values()) {
-        for (const id of source.ids()) next = earliest(next, yield* source.catchUp(id, until));
-      }
+      // A round holds every source's lock, so no commit lands between moving
+      // a cursor and enqueueing the history behind it.
+      const all = [...sources.values()];
+      const round = Effect.gen(function* () {
+        let next: number | undefined;
+        const work: Array<Work> = [];
+        for (const source of all) {
+          for (const id of source.ids()) {
+            const result = yield* source.catchUp(id, until);
+            next = earliest(next, result.next);
+            work.push(...result.work);
+          }
+        }
+        // One total order for the round, whatever order the instances were visited in.
+        yield* enqueueWork(
+          mergeBySource(work, ([delivery]) => delivery).map(([delivery, deliver]) =>
+            deliver(delivery),
+          ),
+        );
+        return next;
+      });
+      const next = yield* all.reduce((effect, source) => source.lock.withPermits(1)(effect), round);
       if (next === undefined) return;
       until = next + window;
     }
@@ -293,6 +326,7 @@ export const make = (
               context: meta.context,
               now: now(),
               correlationId: meta.correlationId,
+              after: latest(meta.after, current.events.at(-1)?.envelope.clock),
               trace: meta.trace,
               link: meta.link,
             });
@@ -326,22 +360,24 @@ export const make = (
           });
         sources.set(kit.name, {
           ids: () => [...instances.keys()],
+          lock,
           catchUp: (id, until) =>
-            lock.withPermits(1)(
-              Effect.suspend(() => {
-                const current = instance(id);
-                const from = laggingFrom(kit.targets, current.routed, current.version);
-                if (from === undefined) return Effect.succeed(undefined);
-                const result = kit.replay({
-                  id,
-                  routed: current.routed!,
-                  rows: current.events.filter((event) => event.envelope.seq > from),
-                  until,
-                });
-                current.routed = result.routed;
-                return enqueue(result.deliveries, kit.deliver).pipe(Effect.as(result.next));
-              }),
-            ),
+            Effect.sync(() => {
+              const current = instance(id);
+              const from = laggingFrom(kit.targets, current.routed, current.version);
+              if (from === undefined) return { next: undefined, work: [] };
+              const result = kit.replay({
+                id,
+                routed: current.routed!,
+                rows: current.events.filter((event) => event.envelope.seq > from),
+                until,
+              });
+              current.routed = result.routed;
+              return {
+                next: result.next,
+                work: result.deliveries.map((d) => [d, kit.deliver] as const),
+              };
+            }),
         });
         const send = (id: string, command: Json, meta: Aggregate.SendMeta) =>
           lock.withPermits(1)(commit(id, command, meta));
@@ -420,6 +456,7 @@ export const make = (
                   events,
                   commandId: `seed:${id}:${current.version}`,
                   now: now(),
+                  after: current.events.at(-1)?.envelope.clock,
                 });
                 const live = routeLive(
                   kit.targets,
@@ -472,25 +509,26 @@ export const make = (
           });
         sources.set(kit.name, {
           ids: () => [...keys.keys()],
+          lock,
           catchUp: (key, until) =>
-            lock.withPermits(1)(
-              Effect.gen(function* () {
-                const current = yield* get(key);
-                const snapshot = yield* SubscriptionRef.get(current.snapshot);
-                const from = laggingFrom(kit.targets, current.routed, snapshot.seq);
-                if (from === undefined) return undefined;
-                const entries = yield* SubscriptionRef.get(current.entries);
-                const result = kit.replay({
-                  id: key,
-                  routed: current.routed!,
-                  rows: entries.filter((entry) => entry.seq > from),
-                  until,
-                });
-                current.routed = result.routed;
-                yield* enqueue(result.deliveries, kit.deliver);
-                return result.next;
-              }),
-            ),
+            Effect.gen(function* () {
+              const current = yield* get(key);
+              const snapshot = yield* SubscriptionRef.get(current.snapshot);
+              const from = laggingFrom(kit.targets, current.routed, snapshot.seq);
+              if (from === undefined) return { next: undefined, work: [] };
+              const entries = yield* SubscriptionRef.get(current.entries);
+              const result = kit.replay({
+                id: key,
+                routed: current.routed!,
+                rows: entries.filter((entry) => entry.seq > from),
+                until,
+              });
+              current.routed = result.routed;
+              return {
+                next: result.next,
+                work: result.deliveries.map((d) => [d, kit.deliver] as const),
+              };
+            }),
         });
         return {
           receive: (key, deliveries) =>

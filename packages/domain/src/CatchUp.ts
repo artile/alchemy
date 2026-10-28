@@ -13,9 +13,10 @@ import type { Delivery } from "./Platform.ts";
  * consumer receives one source instance's events in order, as the live path
  * does, and replays never jump ahead of history.
  *
- * Platforms replay in rounds bounded by time: each round replays every
- * instance's events committed before `until`, so a consumer fed by many
- * instances sees their history roughly in the order it happened. Policies are
+ * Platforms replay in rounds bounded by the clock (see {@link TICKS}): each
+ * round replays every instance's events before `until`, merged by
+ * {@link byPosition}, so a consumer fed by many instances sees their history
+ * in clock order, with every effect of a policy after its cause. Policies are
  * never caught up: they act on new events only.
  *
  * @internal
@@ -76,7 +77,7 @@ export interface ReplayInput<Row> {
   readonly id: string;
   readonly routed: Routed;
   readonly rows: ReadonlyArray<Row>;
-  /** Replay only rows committed before this time, in epoch milliseconds. */
+  /** Replay only rows whose clock is before this, in milliseconds (`clock / TICKS`). */
   readonly until: number;
 }
 
@@ -85,10 +86,70 @@ export interface ReplayResult {
   /** Deliveries to lagging consumers, marked `history`. */
   readonly deliveries: ReadonlyArray<Delivery>;
   readonly routed: Routed;
-  /** When the first row left unreplayed was committed, if a row was left. */
+  /** The clock of the first row left unreplayed, in milliseconds, if a row was left. */
   readonly next: number | undefined;
 }
 
 /** The earlier of two optional times. */
 export const earliest = (a: number | undefined, b: number | undefined): number | undefined =>
   a === undefined ? b : b === undefined ? a : Math.min(a, b);
+
+/**
+ * Ticks of the hybrid logical clock per millisecond. An event's `clock` is
+ * `now * TICKS` unless its cause (the event whose policy sent the command) or
+ * the instance's previous event already has a clock at or past that: then it
+ * is one tick after the larger of them. So a clock never runs backwards on an
+ * instance, every command a policy sends commits after the event it reacted
+ * to, and the clock stays close to wall time unless a host's clock runs ahead.
+ * A view entry is a new event on its key: its clock is its input's clock, or
+ * one tick after the key's previous entry if that is later.
+ */
+export const TICKS = 1000;
+
+/** The clock of the first event of a commit: see {@link TICKS}. */
+export const stamp = (now: number, after: number | undefined): number =>
+  after === undefined ? now * TICKS : Math.max(now * TICKS, after + 1);
+
+/** An event's place in the cross-aggregate order: its clock, else its commit time. */
+export const positionOf = (envelope: { readonly at: number; readonly clock?: number }): number =>
+  envelope.clock ?? envelope.at * TICKS;
+
+/**
+ * Which of two replayed deliveries comes first: by clock, then by source
+ * stream and `seq`. Every source's clocks rise with `seq`, so it keeps each
+ * source's order, puts a policy's effects after their causes, and does not
+ * depend on how instances were listed.
+ */
+export const byPosition = (a: Delivery, b: Delivery): number =>
+  positionOf(a.envelope) - positionOf(b.envelope) ||
+  (a.source < b.source ? -1 : a.source > b.source ? 1 : 0) ||
+  a.seq - b.seq;
+
+/**
+ * Merge each source's items, kept in their own order, into one: take the
+ * source whose next item comes first by {@link byPosition}. Entries a view
+ * stored before clocks carry their inputs' `at`, which need not rise with
+ * `seq`, so a plain sort could reorder one source.
+ */
+export const mergeBySource = <T>(
+  items: ReadonlyArray<T>,
+  deliveryOf: (item: T) => Delivery,
+): Array<T> => {
+  const queues = new Map<string, Array<T>>();
+  for (const item of items) {
+    const source = deliveryOf(item).source;
+    const queue = queues.get(source);
+    if (queue) queue.push(item);
+    else queues.set(source, [item]);
+  }
+  const heads = [...queues.values()];
+  const out: Array<T> = [];
+  while (heads.length > 0) {
+    let first = 0;
+    for (let i = 1; i < heads.length; i++)
+      if (byPosition(deliveryOf(heads[i]![0]!), deliveryOf(heads[first]![0]!)) < 0) first = i;
+    out.push(heads[first]!.shift()!);
+    if (heads[first]!.length === 0) heads.splice(first, 1);
+  }
+  return out;
+};

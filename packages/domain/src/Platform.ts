@@ -25,6 +25,8 @@ export const EnvelopeJson = Schema.Struct({
   at: Schema.Number,
   /** Absent on events stored before correlation ids: the command id stands in. */
   correlationId: Schema.optionalKey(Schema.String),
+  /** Hybrid logical clock (see `CatchUp.TICKS`); absent on events stored before it. */
+  clock: Schema.optionalKey(Schema.Number),
   /** The span that committed the event, so its reactions continue or link to it. */
   trace: Schema.optionalKey(TraceJson),
 });
@@ -119,6 +121,11 @@ export interface HandleInput {
   readonly now: number;
   /** The flow the command belongs to; the command id when it starts one. */
   readonly correlationId?: string;
+  /**
+   * The largest clock the first event must pass: the cause's clock or the
+   * instance's last clock, whichever is larger (see `CatchUp.stamp`).
+   */
+  readonly after?: number;
   /** The span that sent the command. */
   readonly trace?: TraceJson;
   /** Link to `trace` instead of continuing it. */
@@ -199,6 +206,8 @@ export interface SeedInput {
   readonly events: ReadonlyArray<Json>;
   readonly commandId: string;
   readonly now: number;
+  /** The instance's last clock (see `CatchUp.stamp`). */
+  readonly after?: number;
 }
 
 /**
@@ -287,6 +296,8 @@ export interface ViewSnapshot {
   readonly checkpoints: Readonly<Record<string, number>>;
   /** Number of events the key has emitted. */
   readonly seq: number;
+  /** The clock of the key's last entry (see `CatchUp.TICKS`). */
+  readonly clock?: number;
 }
 
 /** The snapshot of a key that has never received a delivery. */

@@ -238,6 +238,8 @@ export interface SendMeta {
   readonly context: RequestContext.Json;
   /** The flow the command belongs to (see {@link Envelope.correlationId}). */
   readonly correlationId?: string;
+  /** The clock of the event that caused the command, so its events sort after it. */
+  readonly after?: number;
   /** The span that sent the command, so the aggregate's span continues its trace. */
   readonly trace?: Telemetry.TraceJson;
   /** Link to `trace` instead of continuing it: the command runs later (scheduled). */
