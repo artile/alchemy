@@ -264,7 +264,7 @@ export interface AnyDefinition {
   readonly events: ReadonlyArray<Event.Any>;
   readonly decide: AnyHandlers;
   readonly evolve: AnyHandlers;
-  readonly reply?: AnyHandlers;
+  readonly reply?: AnyHandlers | undefined;
 }
 
 /** An aggregate instance to address: its id, or a ref carrying it. */
