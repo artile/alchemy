@@ -1,4 +1,4 @@
-import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Cloudflare from "alchemy/Cloudflare";
 
 /**
  * Non-Effect ("remote image") container: Alchemy pulls a pre-built public image

@@ -1,4 +1,4 @@
-import * as AWS from "@alchemy.run/aws";
+import * as AWS from "alchemy/AWS";
 
 /**
  * Build role shared by every MicroVM image (effectful bun/node, bun/node

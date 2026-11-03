@@ -17,8 +17,7 @@
     "destroy": "alchemy destroy"
   },
   "dependencies": {
-    "@alchemy.run/cloudflare": "workspace:*",
-    "@distilled.cloud/cloudflare": "workspace:*",
+    "@distilled.cloud/cloudflare": "catalog:",
     "@effect/platform-node": "catalog:",
     "alchemy": "workspace:*",
     "effect": "catalog:"

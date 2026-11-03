@@ -1,12 +1,14 @@
 import { BackendClient } from "@monorepo-multi-stack/backend/Client";
 import * as Effect from "effect/Effect";
-import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
 import React from "react";
 import ReactDOM from "react-dom/client";
 
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8787";
 
-const client = BackendClient(API_URL).pipe(Effect.provide(FetchHttpClient.layer));
+const client = BackendClient(API_URL).pipe(
+  Effect.provide(FetchHttpClient.layer),
+);
 
 function App() {
   const [message, setMessage] = React.useState<string>("loading…");

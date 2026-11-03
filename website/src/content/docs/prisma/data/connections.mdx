@@ -10,7 +10,7 @@ connections stay unambiguous — and every secret output is `Redacted`
 so nothing prints in logs or plan output.
 
 ```typescript
-import * as Prisma from "@alchemy.run/prisma";
+import * as Prisma from "alchemy/Prisma";
 
 const connection = yield* Prisma.Connection("api", {
   database: postgres,
@@ -30,9 +30,8 @@ connection.pooledOrigin; //               parsed pooled connection components
 
 `databaseUrl` is the serverless-safe default for application
 traffic: it prefers the pooled endpoint, then direct, then
-Accelerate. For a standalone database under a project created with
-`createDatabase: false`, pass it (and the direct URL for migration
-tooling) straight into an app's env:
+Accelerate. Pass it (and the direct URL for migration tooling)
+straight into an app's env:
 
 ```typescript
 const app = yield* Prisma.Compute("api", {
@@ -44,10 +43,6 @@ const app = yield* Prisma.Compute("api", {
   },
 });
 ```
-
-If `Prisma.Project` created the project's default database, omit
-these env entries. Prisma injects system-managed `DATABASE_URL` and
-`DATABASE_URL_POOLED` values into Compute deployments automatically.
 
 ## The origin shape
 
@@ -81,9 +76,9 @@ Accelerate-only database has no direct Postgres endpoint, so
 
 ## The Connect binding
 
-Inside a Prisma Compute app, AWS Lambda function, Cloudflare Worker,
-or Cloudflare Container, `Prisma.Connect` resolves the bound
-connection at runtime as a typed client:
+Inside a Prisma Compute app, AWS Lambda function, or Cloudflare
+Worker, `Prisma.Connect` resolves the bound connection at runtime as
+a typed client:
 
 ```typescript
 Effect.gen(function* () {
@@ -100,20 +95,14 @@ Effect.gen(function* () {
 ```
 
 At deploy time the binding carries the connection's outputs into the
-host's environment (env vars on Compute, Lambda, and Containers;
-secret text bindings on Workers); at runtime `db.databaseUrl` and
-friends read them back as `Redacted` values.
-
-A container is a real process with no workerd bindings, so env vars
-are its only channel — which is exactly why `Prisma.Connect` reaches
-it and `Cloudflare.Hyperdrive.Connect` does not. Start the container
-with `api.start({ enableInternet: true })` so it can reach the database. See
-[Which capabilities reach a container](/cloudflare/compute/containers#which-capabilities-reach-a-container).
+host's environment (env vars on Compute and Lambda, secret text
+bindings on Workers); at runtime `db.databaseUrl` and friends read
+them back as `Redacted` values.
 
 ## Rotation
 
-Change `rotate` from `false` to `true` to mint fresh credentials on
-the next deploy while keeping the connection's identity:
+Set `rotate: true` to mint fresh credentials on the next deploy
+while keeping the connection's identity:
 
 ```typescript
 const connection = yield* Prisma.Connection("api", {
@@ -122,10 +111,8 @@ const connection = yield* Prisma.Connection("api", {
 });
 ```
 
-Prisma attempts to revoke the previous credentials on a best-effort
-basis. Downstream consumers receive the new secret on the same deploy
-through their bindings. To rotate again, deploy once with
-`rotate: false`, then change it back to `true`.
+Rotation revokes the previous key, so downstream consumers pick up
+the new secret on the same deploy through their bindings.
 
 ## Where next
 

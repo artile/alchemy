@@ -1,11 +1,11 @@
-import { expect } from "@alchemy.run/test";
-import * as Test from "@alchemy.run/test/Alchemy";
+import type { ScopedPlanStatusSession } from "@/Cli/Cli.ts";
+import * as Command from "@/Command";
+import * as Provider from "@/Provider";
+import * as Test from "@/Test/Alchemy";
+import { expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as pathe from "pathe";
-import * as Command from "@/Command";
-import * as Provider from "@/Provider";
-import type { ScopedPlanStatusSession } from "@/Report.ts";
 
 const { test } = Test.make({ providers: Command.providers() });
 
@@ -32,7 +32,7 @@ test.provider(
       const all = yield* provider.list();
       expect(all).toEqual([]);
     }),
-  { tags: ["unit", "local"], timeout: 30000 },
+  { timeout: 30000 },
 );
 
 // All filesystem-mutating path scenarios live in one test: tests within a file
@@ -90,7 +90,10 @@ test.provider(
 
       // ── 3) Rebuild on source change keeps outdir relative and put ─────────
       yield* Effect.gen(function* () {
-        yield* fs.writeFileString(mainFile, 'export const message = "Updated!";\n');
+        yield* fs.writeFileString(
+          mainFile,
+          'export const message = "Updated!";\n',
+        );
         const rebuilt = yield* deployWith(fixtureDir);
 
         // Content changed -> hash changed -> a rebuild ran...
@@ -102,7 +105,9 @@ test.provider(
       }).pipe(
         // Always restore the fixture so a failed assertion can't leave the
         // working tree dirty for the next run.
-        Effect.ensuring(fs.writeFileString(mainFile, original).pipe(Effect.ignore)),
+        Effect.ensuring(
+          fs.writeFileString(mainFile, original).pipe(Effect.ignore),
+        ),
       );
 
       // ── 4) Legacy absolute outdir persisted in state ──────────────────────
@@ -169,5 +174,5 @@ test.provider(
 
       yield* stack.destroy();
     }),
-  { tags: ["unit", "local"], timeout: 120000 },
+  { timeout: 120000 },
 );

@@ -1,10 +1,13 @@
 import * as Effect from "effect/Effect";
 import { WebSocketServer, type Server } from "ws";
 import * as RpcServer from "./RpcServer.ts";
-import { SESSION_ENV_PARAM } from "./RpcServerEnvironment.ts";
 
 export const RpcServerNode = RpcServer.layerServer(
-  Effect.fn(function* ({ parentConnected, parentDisconnected, createRpcSession }) {
+  Effect.fn(function* ({
+    parentConnected,
+    parentDisconnected,
+    createRpcSession,
+  }) {
     const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
     const url = yield* Effect.callback<string>((resume) => {
       server.on("connection", (ws, req) => {
@@ -15,19 +18,9 @@ export const RpcServerNode = RpcServer.layerServer(
           });
           return;
         }
-        const sessionEnv =
-          new URL(req.url ?? "/", "http://localhost").searchParams.get(SESSION_ENV_PARAM) ??
-          undefined;
-        const session = createRpcSession(ws, sessionEnv);
+        const session = createRpcSession(ws);
         ws.on("message", (data) => {
-          session.dispatch.message(
-            (Array.isArray(data)
-              ? Buffer.concat(data)
-              : Buffer.isBuffer(data)
-                ? data
-                : Buffer.from(data)
-            ).toString(),
-          );
+          session.dispatch.message(data.toString());
         });
         ws.on("close", (code, reason) => {
           session.dispatch.close(code, reason.toString());

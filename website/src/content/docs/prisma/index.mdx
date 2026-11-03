@@ -10,30 +10,18 @@ them — all as resources in one Stack. In dev mode the same Stack
 runs against a local `@prisma/dev` Postgres with nothing to
 provision.
 
-New here? [Set up credentials](/prisma/setup), then follow the
-[four-part tutorial](/prisma/tutorial/part-1) to deploy a Project, an
-Effect-native API, Postgres, and a Vite frontend.
+New here? [Set up credentials](/prisma/setup) first.
 
 ## Resources
 
-A `Prisma.Project` is the top-level container. By default it creates
-a Prisma Postgres database in `us-east-1`:
+A `Prisma.Project` is the top-level container. A `Prisma.Postgres`
+database lives inside it, and a `Prisma.Connection` materializes the
+credentials an application uses to reach that database:
 
 ```typescript
 const project = yield* Prisma.Project("app", {
-  region: "us-east-1",
+  createDatabase: false,
 });
-```
-
-Prisma injects that database's system-managed `DATABASE_URL` and
-`DATABASE_URL_POOLED` variables into Compute deployments
-automatically.
-
-When you need a database with an independent lifecycle and explicit
-connection outputs, declare it separately:
-
-```typescript
-const project = yield* Prisma.Project("app", { createDatabase: false });
 
 const postgres = yield* Prisma.Postgres("db", {
   project,
@@ -44,31 +32,17 @@ const connection = yield* Prisma.Connection("api", {
 });
 ```
 
-Display names are optional for these resources — omit them and alchemy
-generates stable physical names from the Stack, logical ID, and stage.
+Names are optional everywhere — omit them and alchemy generates
+stable physical names from the Stack, logical ID, and stage.
 
 The connection exposes ready-to-use outputs — a conventional
 `databaseUrl`, direct and pooled connection strings, and parsed
 `origin` components for poolers like Hyperdrive. See
 [Connections](/prisma/data/connections).
 
-[Branches](/prisma/data/branches) group databases and apps under
-git-style names. A standalone `Prisma.Branch` has Prisma's `preview`
-role even when promoted to be the project's default branch.
-
-## Websites
-
-Use [`Prisma.Website`](/prisma/frontend/websites) for Vite, Astro
-(SSR or static), Next.js, Nuxt, SvelteKit, React Router, SolidStart,
-TanStack Start, Waku, Octane, Foldkit, Vocs, or any static build.
-The framework's Node-target output runs on Bun in Prisma Compute,
-uploaded as `tar.gz` — no Docker image or registry. Even static sites
-run a Compute static-file server.
-
-Omit `project` for a database-less project created only on live deploy.
-`alchemy dev` runs the native framework dev server without creating
-Prisma resources for the Website. Start with the
-[Vite guide](/prisma/frontend/vite) or [framework overview](/prisma/frontend/websites).
+[Branches](/prisma/data/branches) group databases under git-style
+names — a preview branch per stage, promoted to default when it
+ships.
 
 ## Compute
 
@@ -80,25 +54,27 @@ an Effect-native app defined inline:
 const app = yield* Prisma.Compute("api", {
   project,
   path: "./app",
-  build: "auto",
+  build: {
+    command: "bun run build",
+    outdir: ".output",
+    entrypoint: "server/index.mjs",
+  },
+  port: 3000,
   healthCheck: { path: "/api/health" },
+  env: {
+    DATABASE_URL: connection.databaseUrl,
+  },
 });
 ```
 
-For a standalone database, pass `connection.databaseUrl` explicitly
-as shown in [Connections](/prisma/data/connections).
-
-The candidate health check gates promotion. If the stable endpoint
-fails after promotion, alchemy attempts to restore the previous
-deployment and fails closed if recovery cannot converge. See
-[Deployments](/prisma/compute/deployments).
+Deployments are verified against the health check before promotion
+and rolled back when it fails — see [Compute](/prisma/compute/apps).
 
 ## Runtime bindings
 
 Inside a Compute app, Lambda function, or Cloudflare Worker,
 `Prisma.Connect` turns a Connection into a typed runtime client
-whose `databaseUrl` feeds straight into
-[Prisma ORM v8](/sql/prisma/postgres), `SQL.Postgres`, or Drizzle:
+whose `databaseUrl` feeds straight into `SQL.Postgres` or Drizzle:
 
 ```typescript
 Effect.gen(function* () {
@@ -121,8 +97,7 @@ Postgres providers:
 
 1. [Hyperdrive](/cloudflare/data/hyperdrive) pools the connection's
    direct `origin` at the edge
-2. [Prisma ORM v8](/sql/prisma/postgres),
-   [Drizzle](/cloudflare/data/drizzle), or
+2. [Drizzle](/cloudflare/data/drizzle) or
    [`SQL.Postgres`](/sql/effect-sql/postgres) gives the Worker a
    typed query layer over that connection
 3. [Connect from Workers](/prisma/guides/cloudflare-workers) walks
@@ -133,6 +108,4 @@ Postgres providers:
 - [Project](/providers/prisma/project)
 - [Database](/providers/prisma/database)
 - [Connection](/providers/prisma/connection)
-- [Branch](/providers/prisma/branch)
 - [Compute](/providers/prisma/compute)
-- [SourceRepository](/providers/prisma/sourcerepository)

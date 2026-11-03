@@ -43,7 +43,10 @@ export default {
         await res.text();
         return Response.json({ ms: Date.now() - start, status: res.status });
       } catch (err) {
-        return Response.json({ error: String(err), ms: Date.now() - start }, { status: 500 });
+        return Response.json(
+          { error: String(err), ms: Date.now() - start },
+          { status: 500 },
+        );
       }
     }
 

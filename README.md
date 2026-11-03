@@ -1,62 +1,56 @@
 <div align="center">
 
 <a href="https://alchemy.run">
-  <img src="https://raw.githubusercontent.com/alchemy-run/alchemy/main/images/readme-hero.webp" alt="Alchemy — Infrastructure as Effects" width="360" />
+  <img src="./images/readme-hero.png" alt="Alchemy — Infrastructure as Effects" width="360" />
 </a>
 
 <br />
 
 [![npm](https://img.shields.io/npm/v/alchemy?style=flat-square&color=3f5a2a&label=alchemy)](https://www.npmjs.com/package/alchemy)
 [![license](https://img.shields.io/badge/license-Apache%202.0-3f5a2a?style=flat-square)](./LICENSE)
-[![discord](https://img.shields.io/badge/discord-join-3f5a2a?style=flat-square&logo=discord&logoColor=white)](https://alchemy.run/discord)
+[![discord](https://img.shields.io/badge/discord-join-3f5a2a?style=flat-square&logo=discord&logoColor=white)](https://discord.gg/jwKw8dBJdN)
 
 **Infrastructure-as-Effects** — cloud infrastructure and application logic as a single, type-safe [Effect](https://effect.website) program.
 
-[Docs](https://alchemy.run) · [Tutorial](https://alchemy.run/cloudflare/tutorial/part-1) · [Examples](./examples) · [Discord](https://alchemy.run/discord)
+[Docs](https://alchemy.run) · [Tutorial](https://alchemy.run/tutorial/part-1) · [Examples](./examples) · [Discord](https://discord.gg/jwKw8dBJdN)
 
 </div>
 
 ---
 
-An R2 Bucket, and a Worker that serves files from it:
+A Worker bound to a R2 bucket and serving objects from it:
 
 ```typescript
-import * as Cloudflare from "@alchemy.run/cloudflare";
-import * as Effect from "effect/Effect";
-import * as HttpServerResponse from "effect/http/HttpServerResponse";
-
-export const Uploads = Cloudflare.R2.Bucket("Uploads");
+const Bucket = Cloudflare.R2.Bucket("bucket");
 
 export default Cloudflare.Worker(
-  "Api",
+  "api",
   { main: import.meta.url },
   Effect.gen(function* () {
-    const bucket = yield* Cloudflare.R2.ReadWriteBucket(Uploads);
-
+    const bucket = yield* Cloudflare.R2.ReadWriteBucket(Bucket);
     return {
       fetch: Effect.gen(function* () {
-        const obj = yield* bucket.get("hello.txt");
-        return obj
-          ? HttpServerResponse.text(yield* obj.text())
-          : HttpServerResponse.text("Not found", { status: 404 });
-      }),
+        const request = yield* HttpServerRequest;
+        const object = yield* bucket.get(request.url);
+        return HttpServerResponse.stream(object!.body);
+      })
     };
   }).pipe(Effect.provide(Cloudflare.R2.ReadWriteBucketBinding)),
 );
 ```
 
-One `ReadWriteBucket(Uploads)` call adds the Worker binding at deploy time and hands back a typed client at runtime.
+One `ReadWriteBucket(Bucket)` call wires the binding, env var, and typed client — at deploy time and at runtime.
 
 ---
 
 - **One program, one language.** Resources, Lambdas/Workers, IAM, and SDKs live in the same Effect program — no YAML, no second runtime.
-- **Bindings, not glue code.** `AWS.S3.GetObject(bucket)` wires the IAM policy, env var, and a typed SDK call in a single line.
+- **Bindings, not glue code.** `S3.GetObject(bucket)` wires the IAM policy, env var, and a typed SDK call in a single line.
 - **Errors in the type system.** Every cloud API failure is a tagged Effect error you handle — or don't — on purpose.
-- **Many clouds, one model.** AWS, Cloudflare, GCP, Fly, Hetzner, Kubernetes, Railway, Neon, PlanetScale, Stripe, and more.
+- **AWS + Cloudflare today.** S3, SQS, DynamoDB, Kinesis, Lambda, EC2 / Workers, R2, D1, Durable Objects, Containers.
 - **Same code, every stage.** Local dev, `plan` / `deploy`, smoke tests, and CI all share one mental model.
 
 ```sh
-pnpm add alchemy@latest effect @effect/platform-bun @effect/platform-node
+bun add alchemy@next effect@next
 ```
 
 ## GitHub Action
@@ -65,7 +59,7 @@ Use the root action to deploy `prod` from `main`, deploy PR previews as
 `staging-{number}`, and destroy PR previews when the PR closes:
 
 ```yaml
-- uses: alchemy-run/alchemy@main
+- uses: alchemy-run/alchemy@v1
   env:
     CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
     CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -95,20 +89,12 @@ dependencies or breaking conventions.
 
 - [What is Alchemy?](https://alchemy.run/what-is-alchemy) — the framework in 2 minutes
 - [Getting Started](https://alchemy.run/getting-started) — your first Stack
-- [Tutorial](https://alchemy.run/cloudflare/tutorial/part-1) — build, test, and deploy a Cloudflare app step by step
+- [Tutorial](https://alchemy.run/tutorial/part-1) — five-part walkthrough to a tested, CI-deployed app
 - [Examples](./examples) — runnable projects on AWS and Cloudflare
 - [llms.txt](https://alchemy.run/llms.txt) — agent-ready documentation index
 
-> **alchemy** v2 is in beta. Expect breaking changes. Come hang in our [Discord](https://alchemy.run/discord).
-
-## Credits
-
-### Blacksmith
-
-Thanks to [Blacksmith](https://blacksmith.sh/?ref=alchemy.run) for sponsoring our CI runners. Their fast Linux, macOS, and Windows runners help us test our packages across platforms and deploy our content-heavy website in mere minutes.
+> **alchemy** is in alpha. Expect breaking changes. Come hang in our [Discord](https://discord.gg/jwKw8dBJdN).
 
 ## License
 
-Licensed under the [Apache License 2.0](./LICENSE). See
-[Third-Party Licenses](./THIRD_PARTY_LICENSES.md) for code incorporated from
-upstream projects.
+Apache-2.0

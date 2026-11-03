@@ -1,12 +1,9 @@
 import { defineEcConfig } from "@astrojs/starlight/expressive-code";
-import {
-  alchemyWalnutTheme,
-  capitalizedIdentifierColor,
-  errorAnnotations,
-} from "./plugins/expresssive-code.ts";
-import { previewInstallUrls } from "./plugins/preview-install.ts";
+import { alchemyWalnutTheme } from "./plugins/alchemy-walnut-theme.mjs";
+import { capitalizedIdentifierColor } from "./plugins/capitalized-identifier-color.mjs";
+import { errorAnnotations } from "./plugins/error-annotations.mjs";
 
 export default defineEcConfig({
   themes: [alchemyWalnutTheme],
-  plugins: [errorAnnotations(), capitalizedIdentifierColor(), previewInstallUrls()],
+  plugins: [errorAnnotations(), capitalizedIdentifierColor()],
 });

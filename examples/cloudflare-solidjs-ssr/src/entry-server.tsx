@@ -1,5 +1,5 @@
-import { StaticRouter } from "@solidjs/router";
 import { renderToStringAsync, generateHydrationScript } from "solid-js/web";
+import { StaticRouter } from "@solidjs/router";
 import App from "./app";
 import { routes } from "./routes";
 
@@ -16,7 +16,10 @@ const FALLBACK_HTML = `<!DOCTYPE html>
 </body>
 </html>`;
 
-async function getTemplate(env: { ASSETS: Fetcher }, origin: string): Promise<string> {
+async function getTemplate(
+  env: { ASSETS: Fetcher },
+  origin: string,
+): Promise<string> {
   try {
     const res = await env.ASSETS.fetch(new Request(origin + "/index.html"));
     if (res.ok) {
@@ -43,7 +46,10 @@ export default {
 
       // Render the SolidJS app to HTML on the server
       const appHtml = await renderToStringAsync(() => (
-        <StaticRouter url={pathname} root={(props) => <App>{props.children}</App>}>
+        <StaticRouter
+          url={pathname}
+          root={(props) => <App>{props.children}</App>}
+        >
           {routes}
         </StaticRouter>
       ));
