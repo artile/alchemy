@@ -3,6 +3,7 @@ import * as Foldkit from "@alchemy.run/domain/Foldkit";
 import { InMemory } from "@alchemy.run/domain/InMemory";
 import { Story } from "@alchemy.run/domain/Story";
 import { describe, expect, it } from "@alchemy.run/test";
+import { SqliteClient } from "@effect/sql-sqlite-bun";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Headers from "effect/http/Headers";
@@ -15,6 +16,8 @@ import type * as Rpc from "effect/rpc/Rpc";
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
 import * as Schema from "effect/Schema";
 import * as Tracer from "effect/Tracer";
+import { clean, singleRunner, sqlClient } from "./fixtures/ClusterRunners.ts";
+import type { HostLayer } from "./fixtures/HostContract.ts";
 
 // ---------------------------------------------------------------- a wallet domain
 
@@ -495,6 +498,64 @@ describe("Domain Query", { tags: ["unit", "local"] }, () => {
       "Total waits for Ledger, which is not in the Domain",
       "Duplicate query 'Total'",
     ]);
+  });
+});
+
+// ---------------------------------------------------------------- the same reads on the Cluster host
+
+const MYSQL_URL = process.env.DOMAIN_TEST_MYSQL_URL;
+
+/** Read-your-writes through `atLeast`, on a host that persists its streams and checkpoints. */
+const readsYourWrites = (host: () => HostLayer) => () =>
+  Effect.gen(function* () {
+    const wallets = yield* Wallet;
+    yield* wallets.send(sam, new Open({ owner: "sam" }));
+    const api = yield* WalletApi.clientInProcess;
+    const asSam = { headers: { "x-viewer": "sam" } };
+    // The projection batches for 200ms, so a read with no `atLeast` would see nothing yet.
+    const receipt = yield* api.Deposit("sam-1", {
+      amounts: Array.from({ length: 20 }, (_, i) => i + 1),
+    });
+    const total = yield* api.Total({ wallet: "sam-1" }, { ...asSam, atLeast: receipt });
+    expect(total).toEqual({ total: 210, movements: 20 });
+    const page = yield* api.WalletMovements(
+      { wallet: "sam-1" },
+      { ...asSam, atLeast: receipt, take: 3 },
+    );
+    expect(page.entries.map((row) => row.amount)).toEqual([1, 2, 3]);
+    // A second write moves the stream on; `atLeast` on its receipt waits for it too.
+    const again = yield* api.Deposit("sam-1", { amounts: [100] });
+    const after = yield* api.Total({ wallet: "sam-1" }, { ...asSam, atLeast: again });
+    expect(after).toEqual({ total: 310, movements: 21 });
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      Wallets.layer(handlers({ batch: { size: 100, wait: "200 millis" } })).pipe(
+        Layer.provideMerge(Layer.mergeAll(host(), Movements.memory, ViewerSessionLive)),
+      ),
+    ),
+  );
+
+describe("Domain Query on the Cluster host", () => {
+  it.live(
+    "atLeast reads a client's own writes on SQLite",
+    readsYourWrites(() =>
+      Domain.Cluster.layerSingleRunner({ runnerStorage: "memory" }).pipe(
+        Layer.provideMerge(SqliteClient.layer({ filename: ":memory:" })),
+      ),
+    ),
+  );
+
+  describe.skipIf(MYSQL_URL === undefined)("on MySQL", () => {
+    it.live(
+      "atLeast reads a client's own writes on MySQL",
+      readsYourWrites(() =>
+        singleRunner("dqt_mysql").pipe(
+          Layer.provide(clean("dqt_mysql")),
+          Layer.provideMerge(sqlClient(MYSQL_URL!)),
+        ),
+      ),
+    );
   });
 });
 
