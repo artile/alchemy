@@ -255,10 +255,13 @@ export const hostContract = (name: string, host: () => HostLayer) =>
           expect(ran).toEqual(
             new Domain.AlreadyExecuted({ aggregate: "Hold", id: "h-1", commandId: "expire" }),
           );
-          const again = yield* Effect.flip(
-            holds.schedule("h-1", new ExpireHold(), { after: "1 hour", commandId: "expire" }),
-          );
-          expect(again._tag).toBe("AlreadyExecuted");
+          // Armed again after it ran (#2806): a new deadline under the same id, cancelled by it.
+          const again = yield* holds.schedule("h-1", new ExpireHold(), {
+            after: "1 hour",
+            commandId: "expire",
+          });
+          expect(DateTime.toEpochMillis(again.at)).toBeGreaterThan(at);
+          yield* holds.unschedule("h-1", "expire");
         }),
       ),
     );
