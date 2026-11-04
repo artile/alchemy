@@ -267,6 +267,49 @@ describe("Domain.Cluster on SQLite", () => {
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
+  it.live("a timer that ran before the pin kept run timers is not armed again under its name", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "domain-cluster-legacy-" });
+      const file = path.join(dir, "domain.db");
+      const host = () =>
+        hosted(
+          Domain.Cluster.layerSingleRunner({ runnerStorage: "memory" }).pipe(
+            Layer.provideMerge(SqliteClient.layer({ filename: file })),
+          ),
+        );
+      yield* Effect.gen(function* () {
+        const holds = yield* Hold;
+        yield* holds.schedule("h-9", new ExpireHold(), { after: "100 millis", commandId: "x" });
+        yield* eventually(
+          holds.state("h-9").pipe(
+            Effect.filterOrFail(
+              (s) => s.status === "expired",
+              () => "not yet" as const,
+            ),
+          ),
+        );
+      }).pipe(Effect.scoped, Effect.provide(host()));
+      // What the store kept before a timer's name and its arming were apart: a fired
+      // timer's row deleted, and its receipt under the name.
+      yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`DELETE FROM domain_schedules WHERE id = 'h-9'`;
+        yield* sql`UPDATE domain_receipts SET command_id = 'x' WHERE id = 'h-9'`;
+      }).pipe(Effect.provide(SqliteClient.layer({ filename: file })));
+      yield* Effect.gen(function* () {
+        const holds = yield* Hold;
+        // A policy that runs again for the event that armed it, after the upgrade.
+        yield* holds.schedule("h-9", new ExpireHold(), { after: "100 millis", commandId: "x" });
+        yield* Effect.sleep("600 millis");
+        expect(yield* holds.state("h-9")).toEqual({ status: "expired", expiries: 1 });
+        const ran = yield* Effect.flip(holds.unschedule("h-9", "x"));
+        expect(ran._tag).toBe("AlreadyExecuted");
+      }).pipe(Effect.scoped, Effect.provide(host()));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
   it.live(
     "the sweeper deletes receipts, cancelled timers and processed messages past retention",
     () =>
