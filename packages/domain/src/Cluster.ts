@@ -175,7 +175,13 @@ const SendRpc = Rpc.make("Send", {
 
 /** Store a timer for a command, then send its `Fire`. */
 const ScheduleRpc = Rpc.make("Schedule", {
-  payload: { command: JsonValue, meta: JsonValue, at: Schema.Number },
+  // `name` is the scheduled command's id; a message stored before it existed names it by `meta.commandId`.
+  payload: {
+    name: Schema.optional(Schema.String),
+    command: JsonValue,
+    meta: JsonValue,
+    at: Schema.Number,
+  },
   success: JsonValue,
 }).annotate(ClusterSchema.Uninterruptible, "server");
 
@@ -256,6 +262,8 @@ const TRANSIT_RETRY = {
 
 /** What `token` holds once a timer is cancelled; never a timer token. */
 const CANCELLED = "cancelled";
+/** What `token` holds once a timer ran; never a timer token. */
+const EXECUTED = "executed";
 
 /** How long a failed projection run waits before it runs again. */
 const PROJECTION_RETRY_MS = 10_000;
@@ -736,6 +744,9 @@ const make = (options: Options, models: Set<string>) =>
         yield* sql`DELETE FROM ${table.receipts} WHERE at < ${at - retention.receipts}`;
       if (retention.cancelled !== undefined)
         yield* sql`DELETE FROM ${table.schedules} WHERE token = ${CANCELLED} AND at < ${at - retention.cancelled}`;
+      // A timer that ran answers `AlreadyExecuted` as long as its receipt is kept.
+      if (retention.receipts !== undefined)
+        yield* sql`DELETE FROM ${table.schedules} WHERE token = ${EXECUTED} AND at < ${at - retention.receipts}`;
       if (retention.messages !== undefined && owned.size > 0) {
         // Message ids are snowflakes: the time they were made is in their high bits.
         const before = String(
@@ -788,7 +799,7 @@ const make = (options: Options, models: Set<string>) =>
           command_id: string;
           token: string;
           due: number | string;
-        }>`SELECT name, id, command_id, token, due FROM ${table.schedules} WHERE token <> ${CANCELLED} AND due <= ${everyTimer ? Number.MAX_SAFE_INTEGER : cutoff}`;
+        }>`SELECT name, id, command_id, token, due FROM ${table.schedules} WHERE token <> ${CANCELLED} AND token <> ${EXECUTED} AND due <= ${everyTimer ? Number.MAX_SAFE_INTEGER : cutoff}`;
         yield* Effect.forEach(
           timers,
           (row) =>
@@ -942,9 +953,30 @@ const make = (options: Options, models: Set<string>) =>
                 reportDefects(
                   Effect.gen(function* () {
                     const meta = payload.meta as Aggregate.SendMeta;
+                    const name = payload.name ?? meta.commandId;
                     const outcome = yield* transact(
                       Effect.gen(function* () {
-                        if (yield* receiptOf(id, meta.commandId)) return undefined;
+                        const found = yield* sql<{
+                          token: string;
+                          due: number | string;
+                          meta: string;
+                        }>`SELECT token, due, meta FROM ${table.schedules} WHERE name = ${kit.name} AND id = ${id} AND command_id = ${name}`;
+                        const armed = found[0];
+                        // The same arming again (a policy or step ran again): leave it as it is.
+                        if (
+                          armed !== undefined &&
+                          (JSON.parse(armed.meta) as Aggregate.SendMeta).commandId ===
+                            meta.commandId
+                        )
+                          return { at: Number(armed.due), token: undefined };
+                        // A timer that ran before the store kept run timers: its receipt shows it,
+                        // under this arming's id or, from before a name and its arming were apart,
+                        // under the name. A policy that runs again for that timer's event arms nothing.
+                        if (
+                          armed === undefined &&
+                          ((yield* receiptOf(id, meta.commandId)) || (yield* receiptOf(id, name)))
+                        )
+                          return { at: payload.at, token: undefined };
                         const token = yield* random.uuidV4();
                         const at = yield* now;
                         const row = {
@@ -954,35 +986,36 @@ const make = (options: Options, models: Set<string>) =>
                           meta: JSON.stringify(meta),
                           at,
                         };
-                        const found =
-                          yield* sql`SELECT token FROM ${table.schedules} WHERE name = ${kit.name} AND id = ${id} AND command_id = ${meta.commandId}`;
-                        if (found.length > 0)
-                          yield* sql`UPDATE ${table.schedules} SET ${sql.update(row)} WHERE name = ${kit.name} AND id = ${id} AND command_id = ${meta.commandId}`;
+                        if (armed !== undefined)
+                          yield* sql`UPDATE ${table.schedules} SET ${sql.update(row)} WHERE name = ${kit.name} AND id = ${id} AND command_id = ${name}`;
                         else
-                          yield* sql`INSERT INTO ${table.schedules} ${sql.insert({ name: kit.name, id, command_id: meta.commandId, ...row })}`;
-                        return token;
+                          yield* sql`INSERT INTO ${table.schedules} ${sql.insert({ name: kit.name, id, command_id: name, ...row })}`;
+                        return { at: payload.at, token };
                       }),
                     );
-                    if (outcome === undefined) return "AlreadyExecuted" as unknown;
                     // A timer replaced before it fires finds a stale token and does nothing.
-                    yield* sendFire(
-                      kit.name,
-                      id,
-                      Fire.make({ commandId: meta.commandId, token: outcome, at: payload.at }),
-                    );
-                    return { at: payload.at } as unknown;
+                    if (outcome.token !== undefined)
+                      yield* sendFire(
+                        kit.name,
+                        id,
+                        Fire.make({ commandId: name, token: outcome.token, at: payload.at }),
+                      );
+                    return { at: outcome.at } as unknown;
                   }).pipe(Effect.orDie),
                 ),
               Unschedule: ({ payload }) =>
                 reportDefects(
                   Effect.gen(function* () {
                     const { commandId } = payload;
-                    if (yield* receiptOf(id, commandId)) return "AlreadyExecuted";
                     const rows = yield* sql<{
                       token: string;
                     }>`SELECT token FROM ${table.schedules} WHERE name = ${kit.name} AND id = ${id} AND command_id = ${commandId}`;
-                    if (rows.length === 0) return "NotScheduled";
-                    if (rows[0]!.token === CANCELLED) return "AlreadyCancelled";
+                    const row = rows[0];
+                    // A timer that ran before the store kept run timers: its receipt shows it.
+                    if (row === undefined)
+                      return (yield* receiptOf(id, commandId)) ? "AlreadyExecuted" : "NotScheduled";
+                    if (row.token === EXECUTED) return "AlreadyExecuted";
+                    if (row.token === CANCELLED) return "AlreadyCancelled";
                     const at = yield* now;
                     yield* sql`UPDATE ${table.schedules} SET token = ${CANCELLED}, at = ${at} WHERE name = ${kit.name} AND id = ${id} AND command_id = ${commandId}`;
                     return "Cancelled";
@@ -1006,7 +1039,8 @@ const make = (options: Options, models: Set<string>) =>
                         JSON.parse(row.command),
                         JSON.parse(row.meta) as Aggregate.SendMeta,
                       );
-                      yield* sql`DELETE FROM ${table.schedules} WHERE name = ${kit.name} AND id = ${id} AND command_id = ${payload.commandId}`;
+                      const at = yield* now;
+                      yield* sql`UPDATE ${table.schedules} SET token = ${EXECUTED}, at = ${at} WHERE name = ${kit.name} AND id = ${id} AND command_id = ${payload.commandId}`;
                       return result;
                     }),
                   );
@@ -1023,18 +1057,12 @@ const make = (options: Options, models: Set<string>) =>
         const client = yield* aggregateClient(kit.name);
         return {
           send: (id, command, meta) => call<SendResult>(client(id).Send({ command, meta })),
-          schedule: (id, command, meta, due) =>
+          schedule: (id, name, command, meta, due) =>
             Effect.gen(function* () {
               const at = "at" in due ? due.at : (yield* now) + due.afterMillis;
-              const outcome = yield* call<{ readonly at: number } | "AlreadyExecuted">(
-                client(id).Schedule({ command, meta, at }),
+              const outcome = yield* call<{ readonly at: number }>(
+                client(id).Schedule({ name, command, meta, at }),
               );
-              if (outcome === "AlreadyExecuted")
-                return yield* new AlreadyExecuted({
-                  aggregate: kit.name,
-                  id,
-                  commandId: meta.commandId,
-                });
               return outcome.at;
             }),
           unschedule: (id, commandId) =>
