@@ -166,6 +166,8 @@ export const hostContract = (name: string, host: () => HostLayer) =>
         Effect.gen(function* () {
           const api = yield* ContractApi.Client;
           yield* api.Increment("c-1", { by: 1 });
+          // A view catches up after the commit: watch once it holds the first event.
+          yield* api.Totals.get("c-1", { atLeast: { stream: "Counter/c-1", version: 1 } });
           const watched = yield* Queue.unbounded<{ readonly cursor: number }>();
           yield* api.Totals.watch("c-1").pipe(
             Stream.runForEach((state) => Queue.offer(watched, state)),

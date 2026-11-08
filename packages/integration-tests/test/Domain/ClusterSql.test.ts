@@ -203,6 +203,8 @@ const suite = (
           const watches = yield* Effect.forEach(ids, (id) =>
             Effect.gen(function* () {
               const api = yield* ContractApi.Client;
+              // A view catches up after the commit: watch once it holds the first event.
+              yield* api.Totals.get(id, { atLeast: { stream: `Counter/${id}`, version: 1 } });
               return yield* api.Totals.watch(id).pipe(
                 Stream.take(2),
                 Stream.runCollect,
