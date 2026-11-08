@@ -76,7 +76,7 @@ const checkFile = Effect.gen(function* () {
   return committed;
 });
 
-describe("Domain.Cluster after a SIGKILL", () => {
+describe("Domain.Cluster after a SIGKILL", { tags: ["local"] }, () => {
   for (const millis of [30, 400, 2_000]) {
     it.live(
       `a writer killed ${millis} ms into a burst loses nothing it committed`,

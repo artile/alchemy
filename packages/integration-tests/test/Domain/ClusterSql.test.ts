@@ -48,7 +48,7 @@ const suite = (
   client: (url: string) => SqlLayer,
   ports: readonly [number, number, number, number],
 ) =>
-  describe.skipIf(url === undefined)(`Domain.Cluster on ${name}`, () => {
+  describe.skipIf(url === undefined)(`Domain.Cluster on ${name}`, { tags: ["local"] }, () => {
     const tag = name.toLowerCase();
     let next = 0;
     // MySQL and MariaDB: a deadlock must not leave a stored reply without the
