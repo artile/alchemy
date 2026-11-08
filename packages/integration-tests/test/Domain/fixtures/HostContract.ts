@@ -6,6 +6,7 @@
 import * as Domain from "@alchemy.run/domain";
 import { Internals } from "@alchemy.run/domain/Model";
 import { describe, expect, it } from "@alchemy.run/test";
+import type * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -41,7 +42,7 @@ export * from "./ContractModel.ts";
 
 /** What a host gives a model. */
 export type HostLayer<A = never> = Layer.Layer<
-  Domain.Platform | WorkflowEngine.WorkflowEngine | A,
+  Domain.Platform | WorkflowEngine.WorkflowEngine | SecureRandom.SecureRandom | A,
   unknown
 >;
 
@@ -76,7 +77,7 @@ export const hostContract = (name: string, host: () => HostLayer) =>
           const again = yield* counters.send("c-1", new Increment({ by: 2 }), { commandId: "x" });
           expect(again).toEqual(first);
           expect(first.version).toBe(1);
-          expect(yield* counters.state("c-1")).toEqual({ total: 2 });
+          expect(yield* counters.get("c-1")).toEqual({ total: 2 });
         }),
       ),
     );
@@ -94,7 +95,7 @@ export const hostContract = (name: string, host: () => HostLayer) =>
             commandId: "w",
           });
           expect(accepted.version).toBe(2);
-          expect(yield* counters.state("c-1")).toEqual({ total: 5 });
+          expect(yield* counters.get("c-1")).toEqual({ total: 5 });
         }),
       ),
     );
@@ -110,7 +111,7 @@ export const hostContract = (name: string, host: () => HostLayer) =>
             { concurrency: "unbounded" },
           );
           expect(new Set(receipts.map((r) => r.version))).toEqual(new Set([1]));
-          expect(yield* counters.state("c-1")).toEqual({ total: 1 });
+          expect(yield* counters.get("c-1")).toEqual({ total: 1 });
         }),
       ),
     );
@@ -126,7 +127,7 @@ export const hostContract = (name: string, host: () => HostLayer) =>
           expect(receipts.map((r) => r.version).sort((a, b) => a - b)).toEqual(
             Array.from({ length: 20 }, (_, i) => i + 1),
           );
-          expect(yield* counters.state("c-1")).toEqual({ total: 20 });
+          expect(yield* counters.get("c-1")).toEqual({ total: 20 });
         }),
       ),
     );
@@ -160,13 +161,13 @@ export const hostContract = (name: string, host: () => HostLayer) =>
       ),
     );
 
-    it.live("aggregate watch and events follow new commits", () =>
+    it.live("a view keyed by the aggregate: watch and events follow new commits", () =>
       provide(
         Effect.gen(function* () {
           const api = yield* ContractApi.Client;
           yield* api.Increment("c-1", { by: 1 });
           const watched = yield* Queue.unbounded<{ readonly cursor: number }>();
-          yield* api.Counter.watch("c-1").pipe(
+          yield* api.Totals.watch("c-1").pipe(
             Stream.runForEach((state) => Queue.offer(watched, state)),
             Effect.forkChild,
           );
@@ -175,7 +176,7 @@ export const hostContract = (name: string, host: () => HostLayer) =>
           yield* api.Increment("c-1", { by: 2 });
           const second = yield* Queue.take(watched).pipe(Effect.timeout("10 seconds"));
           expect([first.cursor, second.cursor]).toEqual([1, 2]);
-          const events = yield* api.Counter.events("c-1").pipe(Stream.take(3), Stream.runCollect);
+          const events = yield* api.Totals.events("c-1").pipe(Stream.take(3), Stream.runCollect);
           expect(frames(events)).toEqual([1, 2, "caught up at 2"]);
         }),
       ),
@@ -187,7 +188,7 @@ export const hostContract = (name: string, host: () => HostLayer) =>
           const counters = yield* Counter;
           for (const by of [1, 2, 3]) yield* counters.send("c-1", new Increment({ by }));
           yield* eventually(
-            counters.state("mirror-c-1").pipe(
+            counters.get("mirror-c-1").pipe(
               Effect.filterOrFail(
                 (s) => s.total === 6,
                 () => "not yet" as const,
@@ -242,7 +243,7 @@ export const hostContract = (name: string, host: () => HostLayer) =>
             commandId: "expire",
           });
           yield* eventually(
-            holds.state("h-1").pipe(
+            holds.get("h-1").pipe(
               Effect.filterOrFail(
                 (s) => s.status === "expired",
                 () => "not yet" as const,
@@ -250,7 +251,7 @@ export const hostContract = (name: string, host: () => HostLayer) =>
             ),
           );
           yield* Effect.sleep("300 millis");
-          expect(yield* holds.state("h-1")).toEqual({ status: "expired", expiries: 1 });
+          expect(yield* holds.get("h-1")).toEqual({ status: "expired", expiries: 1 });
           const ran = yield* Effect.flip(holds.unschedule("h-1", "expire"));
           expect(ran).toEqual(
             new Domain.AlreadyExecuted({ aggregate: "Hold", id: "h-1", commandId: "expire" }),
@@ -284,7 +285,7 @@ export const hostContract = (name: string, host: () => HostLayer) =>
             new Domain.NotScheduled({ aggregate: "Hold", id: "h-2", commandId: "never" }),
           );
           yield* eventually(
-            holds.state("h-3").pipe(
+            holds.get("h-3").pipe(
               Effect.filterOrFail(
                 (s) => s.status === "expired",
                 () => "not yet" as const,
@@ -294,7 +295,7 @@ export const hostContract = (name: string, host: () => HostLayer) =>
           // Past h-2's due time, and then some.
           const left = DateTime.toEpochMillis(h2.at) + 500 - (yield* Effect.sync(() => Date.now()));
           yield* Effect.sleep(Math.max(0, left));
-          expect((yield* holds.state("h-2")).status).toBe("none");
+          expect((yield* holds.get("h-2")).status).toBe("none");
           // Scheduled again after a cancel: it can be cancelled again.
           yield* holds.schedule("h-2", new ExpireHold(), { after: "1 hour", commandId: "x" });
           yield* holds.unschedule("h-2", "x");
@@ -312,7 +313,7 @@ export const hostContract = (name: string, host: () => HostLayer) =>
           const second = yield* pays.start("p-1", input);
           expect(second.executionId).toBe(first.executionId);
           expect(yield* first.result).toEqual({ approvedBy: null });
-          expect(yield* wallets.state("w-1")).toEqual({ balance: 70 });
+          expect(yield* wallets.get("w-1")).toEqual({ balance: 70 });
         }),
       ),
     );
@@ -338,7 +339,7 @@ export const hostContract = (name: string, host: () => HostLayer) =>
           );
           yield* approved.signal(Approval, "agent-7");
           expect(yield* approved.result).toEqual({ approvedBy: "agent-7" });
-          expect(yield* wallets.state("w-2")).toEqual({ balance: 80 });
+          expect(yield* wallets.get("w-2")).toEqual({ balance: 80 });
 
           const refused = yield* pays.start("p-3", {
             wallet: "w-3",
@@ -348,7 +349,7 @@ export const hostContract = (name: string, host: () => HostLayer) =>
           });
           expect(yield* Effect.flip(refused.result)).toEqual(new TooLarge());
           yield* eventually(
-            wallets.state("w-3").pipe(
+            wallets.get("w-3").pipe(
               Effect.filterOrFail(
                 (s) => s.balance === 100,
                 () => "not yet" as const,
@@ -370,7 +371,7 @@ export const hostContract = (name: string, host: () => HostLayer) =>
           yield* run.result;
           expect(attempts.get(key)).toBe(2);
           // Two attempts, one debit: the retry's command had the same id.
-          expect(yield* wallets.state("w-9")).toEqual({ balance: 90 });
+          expect(yield* wallets.get("w-9")).toEqual({ balance: 90 });
         }),
       ),
     );

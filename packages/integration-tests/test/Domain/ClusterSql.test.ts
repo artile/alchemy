@@ -107,12 +107,12 @@ const suite = (
             { concurrency: 16, discard: true },
           );
           for (const id of ids) {
-            expect(yield* counters.state(id)).toEqual({ total: 40 });
+            expect(yield* counters.get(id)).toEqual({ total: 40 });
             expect(
               yield* api.Totals.get(id, { atLeast: { stream: `Counter/${id}`, version: 40 } }),
             ).toEqual({ total: 40 });
             yield* eventually(
-              counters.state(`mirror-${id}`).pipe(
+              counters.get(`mirror-${id}`).pipe(
                 Effect.filterOrFail(
                   (s) => s.total === 40,
                   () => "not yet" as const,
@@ -203,7 +203,7 @@ const suite = (
           const watches = yield* Effect.forEach(ids, (id) =>
             Effect.gen(function* () {
               const api = yield* ContractApi.Client;
-              return yield* api.Counter.watch(id).pipe(
+              return yield* api.Totals.watch(id).pipe(
                 Stream.take(2),
                 Stream.runCollect,
                 Effect.forkChild,
@@ -230,7 +230,7 @@ const suite = (
             const counters = yield* Counter;
             const api = yield* ContractApi.Client;
             for (const id of ids) {
-              expect(yield* counters.state(id)).toEqual({ total: 3 });
+              expect(yield* counters.get(id)).toEqual({ total: 3 });
               yield* eventually(
                 api.Totals.get(id).pipe(
                   Effect.filterOrFail(
@@ -297,7 +297,7 @@ const suite = (
             const counters = yield* Counter;
             const api = yield* ContractApi.Client;
             for (const id of ids) {
-              expect(yield* counters.state(id)).toEqual({ total: 2 });
+              expect(yield* counters.get(id)).toEqual({ total: 2 });
               yield* eventually(
                 api.Totals.get(id).pipe(
                   Effect.filterOrFail(
@@ -308,7 +308,7 @@ const suite = (
                 60,
               );
               yield* eventually(
-                counters.state(`mirror-${id}`).pipe(
+                counters.get(`mirror-${id}`).pipe(
                   Effect.filterOrFail(
                     (s) => s.total === 2,
                     () => "not yet" as const,
