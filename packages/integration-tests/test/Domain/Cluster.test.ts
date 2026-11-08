@@ -156,7 +156,7 @@ describe("Domain.Cluster on SQLite", () => {
         const api = yield* ContractApi.Client;
         yield* api.Increment("c-1", { by: 1 });
         const seen = yield* Queue.unbounded<{ readonly cursor: number }>();
-        yield* api.Counter.watch("c-1").pipe(
+        yield* api.Totals.watch("c-1").pipe(
           Stream.runForEach((item) => Queue.offer(seen, item)),
           Effect.forkChild,
         );
@@ -172,7 +172,7 @@ describe("Domain.Cluster on SQLite", () => {
     Effect.gen(function* () {
       const counters = yield* Counter;
       yield* counters.send("c-1", new Increment({ by: 1 }));
-      expect(yield* counters.state("c-1")).toEqual({ total: 1 });
+      expect(yield* counters.get("c-1")).toEqual({ total: 1 });
       // Options that mean the same share one Layer.
       expect(Domain.Cluster.layer({ entityMaxIdleTime: "1 second" })).toBe(
         Domain.Cluster.layer({ entityMaxIdleTime: 1_000_000_000n }),
@@ -212,7 +212,7 @@ describe("Domain.Cluster on SQLite", () => {
       yield* Effect.gen(function* () {
         const counters = yield* Counter;
         yield* counters.send("c-1", new Increment({ by: 1 }));
-        expect(yield* counters.state("c-1")).toEqual({ total: 1 });
+        expect(yield* counters.get("c-1")).toEqual({ total: 1 });
       }).pipe(
         Effect.scoped,
         Effect.provide(
@@ -255,7 +255,7 @@ describe("Domain.Cluster on SQLite", () => {
         yield* Effect.gen(function* () {
           const holds = yield* Hold;
           yield* eventually(
-            holds.state("h-1").pipe(
+            holds.get("h-1").pipe(
               Effect.filterOrFail(
                 (s) => s.status === "expired",
                 () => "not yet" as const,
@@ -283,7 +283,7 @@ describe("Domain.Cluster on SQLite", () => {
         const holds = yield* Hold;
         yield* holds.schedule("h-9", new ExpireHold(), { after: "100 millis", commandId: "x" });
         yield* eventually(
-          holds.state("h-9").pipe(
+          holds.get("h-9").pipe(
             Effect.filterOrFail(
               (s) => s.status === "expired",
               () => "not yet" as const,
@@ -303,7 +303,7 @@ describe("Domain.Cluster on SQLite", () => {
         // A policy that runs again for the event that armed it, after the upgrade.
         yield* holds.schedule("h-9", new ExpireHold(), { after: "100 millis", commandId: "x" });
         yield* Effect.sleep("600 millis");
-        expect(yield* holds.state("h-9")).toEqual({ status: "expired", expiries: 1 });
+        expect(yield* holds.get("h-9")).toEqual({ status: "expired", expiries: 1 });
         const ran = yield* Effect.flip(holds.unschedule("h-9", "x"));
         expect(ran._tag).toBe("AlreadyExecuted");
       }).pipe(Effect.scoped, Effect.provide(host()));
@@ -459,13 +459,13 @@ describe("Domain.Cluster on SQLite", () => {
         const api = yield* ContractApi.Client;
         const counters = yield* Counter;
         const holds = yield* Hold;
-        expect(yield* counters.state("c-1")).toEqual({ total: 6 });
+        expect(yield* counters.get("c-1")).toEqual({ total: 6 });
         const total = yield* api.Totals.get("c-1", {
           atLeast: { stream: "Counter/c-1", version: 3 },
         });
         expect(total).toEqual({ total: 6 });
         yield* eventually(
-          holds.state("h-1").pipe(
+          holds.get("h-1").pipe(
             Effect.filterOrFail(
               (s) => s.status === "expired",
               () => "not yet" as const,
@@ -473,7 +473,7 @@ describe("Domain.Cluster on SQLite", () => {
           ),
         );
         yield* eventually(
-          counters.state("mirror-c-1").pipe(
+          counters.get("mirror-c-1").pipe(
             Effect.filterOrFail(
               (s) => s.total === 6,
               () => "not yet" as const,

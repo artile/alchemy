@@ -42,7 +42,6 @@ export class Counter extends Domain.Aggregate("Counter", {
     Incremented: (s, e) => ({ total: s.total + e.by }),
     Withdrawn: (s, e) => ({ total: s.total - e.amount }),
   },
-  read: {},
 }) {}
 
 export class Totals extends Domain.View("Totals", {
@@ -264,7 +263,6 @@ export class ContractApi extends Domain.Api("ContractApi", {
   commands: ["Increment"],
   views: ["Totals"],
   streams: ["Bumps"],
-  aggregates: ["Counter"],
 }) {}
 
 export const Handlers = Layer.mergeAll(BumpWriterLive, MirrorLive, PayLive, RetryLive, HangLive);

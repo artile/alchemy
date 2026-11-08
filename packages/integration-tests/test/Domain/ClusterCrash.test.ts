@@ -113,14 +113,14 @@ describe("Domain.Cluster after a SIGKILL", () => {
               expect(replay.version).toBe(receipt.version);
             }
             for (const id of counters) {
-              const { total } = yield* counter.state(id);
+              const { total } = yield* counter.get(id);
               if (total === 0) continue;
               const view = yield* api.Totals.get(id, {
                 atLeast: { stream: `Counter/${id}`, version: total },
               });
               expect(view).toEqual({ total });
               yield* eventually(
-                counter.state(`mirror-${id}`).pipe(
+                counter.get(`mirror-${id}`).pipe(
                   Effect.filterOrFail(
                     (s) => s.total === total,
                     () => "not yet" as const,
@@ -130,14 +130,14 @@ describe("Domain.Cluster after a SIGKILL", () => {
               );
             }
             yield* eventually(
-              holds.state("h-1").pipe(
+              holds.get("h-1").pipe(
                 Effect.filterOrFail(
                   (s) => s.status === "expired",
                   () => "not yet" as const,
                 ),
               ),
             );
-            expect((yield* holds.state("h-1")).expiries).toBe(1);
+            expect((yield* holds.get("h-1")).expiries).toBe(1);
           }).pipe(
             Effect.scoped,
             Effect.provide(
@@ -170,7 +170,7 @@ describe("Domain.Cluster after a SIGKILL", () => {
           const wallets = yield* Wallet;
           // The run resumes on the new process and runs the step again.
           yield* hangs.get("h-1").result.pipe(Effect.timeout("60 seconds"));
-          expect(yield* wallets.state("w-h")).toEqual({ balance: 90 });
+          expect(yield* wallets.get("w-h")).toEqual({ balance: 90 });
         }).pipe(
           Effect.scoped,
           Effect.provide(
