@@ -51,7 +51,7 @@ const definitionReason = (exit: Exit.Exit<unknown, unknown>) => {
 hostContract("InMemory", () => InMemory);
 hostContract("Cluster on SQLite", () => onSqlite());
 
-describe("Domain.Cluster on SQLite", () => {
+describe("Domain.Cluster on SQLite", { tags: ["local"] }, () => {
   it.live("a model's sagas keep the workflow names they had before models had own storage", () =>
     Effect.gen(function* () {
       const pays = yield* Pay;
