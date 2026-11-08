@@ -65,7 +65,7 @@ const frames = (items: ReadonlyArray<Frame>) =>
 
 /** Register the contract suite for one host. */
 export const hostContract = (name: string, host: () => HostLayer) =>
-  describe(`Domain host contract: ${name}`, () => {
+  describe(`Domain host contract: ${name}`, { tags: ["local"] }, () => {
     const provide = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
       effect.pipe(Effect.scoped, Effect.provide(hosted(host())));
 
