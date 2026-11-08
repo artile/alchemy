@@ -36,7 +36,7 @@ describe(
               },
             },
             cancelled: {},
-            armedBy: {},
+            armed: {},
           },
         },
       },
@@ -104,7 +104,7 @@ describe(
             version: 0,
             receipts: {},
             cancelled: { t: true },
-            armedBy: {},
+            armed: {},
           }),
       ],
       [
