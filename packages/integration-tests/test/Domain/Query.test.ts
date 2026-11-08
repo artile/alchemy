@@ -3,13 +3,17 @@ import * as Foldkit from "@alchemy.run/domain/Foldkit";
 import { InMemory } from "@alchemy.run/domain/InMemory";
 import { Story } from "@alchemy.run/domain/Story";
 import { describe, expect, it } from "@alchemy.run/test";
+import * as BunServices from "@effect/platform-bun/BunServices";
 import { SqliteClient } from "@effect/sql-sqlite-bun";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Headers from "effect/http/Headers";
 import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import * as Ref from "effect/Ref";
 import type * as Rpc from "effect/rpc/Rpc";
@@ -625,24 +629,172 @@ const readsYourWrites = (host: () => HostLayer) => () =>
     ),
   );
 
-describe("Domain Query on the Cluster host", () => {
-  it.live(
-    "atLeast reads a client's own writes on SQLite",
-    readsYourWrites(() =>
-      Domain.Cluster.layerSingleRunner({ runnerStorage: "memory" }).pipe(
-        Layer.provideMerge(SqliteClient.layer({ filename: ":memory:" })),
-      ),
-    ),
+/** A model on `host` whose Ledger batches for `wait`, over a Movements store kept outside it. */
+const onHost = (host: HostLayer, movements: Layer.Layer<Movements>, wait: Duration.Input) =>
+  Wallets.layer(handlers({ batch: { size: 100, wait } })).pipe(
+    Layer.provideMerge(Layer.mergeAll(host, movements, ViewerSessionLive)),
+  );
+
+/** A Movements store that counts every row the projection writes, so a replay shows. */
+const countingMovements = Effect.gen(function* () {
+  const inner = yield* Effect.gen(function* () {
+    return yield* Movements;
+  }).pipe(Effect.provide(Movements.memory));
+  const written = yield* Ref.make(0);
+  const layer = Layer.succeed(Movements, {
+    upsert: (rows) =>
+      Ref.update(written, (n) => n + rows.length).pipe(Effect.andThen(inner.upsert(rows))),
+    page: inner.page,
+  });
+  return { layer, written: Ref.get(written) };
+});
+
+/** `atLeast` with several receipts: one per command, on different keys. */
+const severalReceipts = (host: () => HostLayer) => () =>
+  Effect.gen(function* () {
+    const { layer } = yield* countingMovements;
+    yield* Effect.gen(function* () {
+      const api = yield* WalletApi.clientInProcess;
+      const first = yield* api.Deposit("sam-1", { amounts: [10, 20] });
+      const second = yield* api.Deposit("kim-1", { amounts: [12] });
+      // The Ledger batches for 500ms, so without both receipts this reads less.
+      const combined = yield* api.Combined(
+        { wallets: ["sam-1", "kim-1"] },
+        { atLeast: [first, second] },
+      );
+      expect(combined).toEqual({ total: 42 });
+    }).pipe(Effect.scoped, Effect.provide(onHost(host(), layer, "500 millis")));
+  });
+
+/**
+ * A guarded, paged query. The middleware refuses an anonymous caller before
+ * the `atLeast` wait. The handler refuses a caller without rights: under the
+ * #3078 contract the engine waits for `atLeast` before the handler runs.
+ */
+const guarded = (host: () => HostLayer) => () =>
+  Effect.gen(function* () {
+    const { layer } = yield* countingMovements;
+    yield* Effect.gen(function* () {
+      const api = yield* WalletApi.clientInProcess;
+      const asSam = { headers: { "x-viewer": "sam" } };
+      const asKim = { headers: { "x-viewer": "kim" } };
+      const wallets = yield* Wallet;
+      const opened = yield* wallets.send(sam, new Open({ owner: "sam" }));
+      // The handler reads the owner from a view: wait for it first.
+      expect(yield* api.OwnerOf({ wallet: "sam-1" }, { atLeast: opened })).toBe("sam");
+
+      const receipt = yield* api.Deposit("sam-1", { amounts: [1, 2, 3, 4, 5] });
+      // The Ledger batches for 3s. An anonymous caller fails in the middleware, before the wait.
+      const [anonymousMillis, anonymous] = yield* api
+        .WalletMovements({ wallet: "sam-1" }, { atLeast: receipt })
+        .pipe(
+          Effect.flip,
+          Effect.timed,
+          Effect.map(([d, e]) => [Duration.toMillis(d), e] as const),
+        );
+      expect(anonymous._tag).toBe("Unauthenticated");
+      expect(anonymousMillis).toBeLessThan(1_500);
+      // Without `atLeast`, the handler refuses a caller without rights at once.
+      const [plainMillis, plain] = yield* api.WalletMovements({ wallet: "sam-1" }, asKim).pipe(
+        Effect.flip,
+        Effect.timed,
+        Effect.map(([d, e]) => [Duration.toMillis(d), e] as const),
+      );
+      expect(plain).toEqual(new NotYours({ wallet: "sam-1" }));
+      expect(plainMillis).toBeLessThan(1_500);
+      // With `atLeast`, the handler refuses it too, after the engine waited for the Ledger.
+      const refused = yield* api
+        .WalletMovements({ wallet: "sam-1" }, { ...asKim, atLeast: receipt })
+        .pipe(Effect.flip);
+      expect(refused).toEqual(new NotYours({ wallet: "sam-1" }));
+
+      // The owner pages through the rows.
+      const page = yield* api.WalletMovements(
+        { wallet: "sam-1" },
+        { ...asSam, atLeast: receipt, take: 2 },
+      );
+      expect(page.entries.map((row) => row.amount)).toEqual([1, 2]);
+      const next = yield* api.WalletMovements(
+        { wallet: "sam-1" },
+        { ...asSam, after: page.cursor!, take: 3 },
+      );
+      expect(next.entries.map((row) => row.amount)).toEqual([3, 4, 5]);
+      expect(next.cursor).toBeNull();
+    }).pipe(Effect.scoped, Effect.provide(onHost(host(), layer, "3 seconds")));
+  });
+
+/**
+ * A restart on the same database: a resent command id returns its first
+ * receipt, a query with the old receipt reads the same rows, and the
+ * projection writes each row once.
+ */
+const restart = (host: () => HostLayer) =>
+  Effect.gen(function* () {
+    const { layer, written } = yield* countingMovements;
+    const amounts = Array.from({ length: 20 }, (_, i) => i + 1);
+    const asSam = { headers: { "x-viewer": "sam" } };
+    const first = yield* Effect.gen(function* () {
+      const wallets = yield* Wallet;
+      const api = yield* WalletApi.clientInProcess;
+      yield* wallets.send(sam, new Open({ owner: "sam" }), { commandId: "open-1" });
+      const receipt = yield* wallets.send(sam, new Deposit({ amounts }), { commandId: "dep-1" });
+      expect(yield* api.Total({ wallet: "sam-1" }, { ...asSam, atLeast: receipt })).toEqual({
+        total: 210,
+        movements: 20,
+      });
+      return receipt;
+    }).pipe(Effect.scoped, Effect.provide(onHost(host(), layer, "200 millis")));
+    expect(yield* written).toBe(20);
+
+    yield* Effect.gen(function* () {
+      const wallets = yield* Wallet;
+      const api = yield* WalletApi.clientInProcess;
+      const again = yield* wallets.send(sam, new Deposit({ amounts }), { commandId: "dep-1" });
+      expect(again.version).toBe(first.version);
+      const total = yield* api.Total({ wallet: "sam-1" }, { ...asSam, atLeast: [first, again] });
+      expect(total).toEqual({ total: 210, movements: 20 });
+      expect(yield* wallets.get(sam)).toEqual({ owner: "sam" });
+      // Give a replay the time it would need to show.
+      yield* Effect.sleep("1 second");
+    }).pipe(Effect.scoped, Effect.provide(onHost(host(), layer, "200 millis")));
+    expect(yield* written).toBe(20);
+  });
+
+describe("Domain Query on the Cluster host", { tags: ["unit", "local"] }, () => {
+  const sqliteMemory = () =>
+    Domain.Cluster.layerSingleRunner({ runnerStorage: "memory" }).pipe(
+      Layer.provideMerge(SqliteClient.layer({ filename: ":memory:" })),
+    );
+
+  it.live("atLeast reads a client's own writes on SQLite", readsYourWrites(sqliteMemory));
+  it.live("atLeast waits for several receipts on SQLite", severalReceipts(sqliteMemory));
+  it.live("a guarded, paged query on SQLite", guarded(sqliteMemory));
+  it.live("a restart does not run a command or a projection write twice on SQLite", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "domain-query-" });
+      yield* restart(() =>
+        Domain.Cluster.layerSingleRunner({ runnerStorage: "memory" }).pipe(
+          Layer.provideMerge(SqliteClient.layer({ filename: path.join(dir, "query.db") })),
+        ),
+      );
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
   describe.skipIf(MYSQL_URL === undefined)("on MySQL", () => {
-    it.live(
-      "atLeast reads a client's own writes on MySQL",
-      readsYourWrites(() =>
-        singleRunner("dqt_mysql").pipe(
-          Layer.provide(clean("dqt_mysql")),
-          Layer.provideMerge(sqlClient(MYSQL_URL!)),
-        ),
+    const onMysql = (prefix: string) => () =>
+      singleRunner(prefix).pipe(
+        Layer.provide(clean(prefix)),
+        Layer.provideMerge(sqlClient(MYSQL_URL!)),
+      );
+    it.live("atLeast reads a client's own writes on MySQL", readsYourWrites(onMysql("dqt_mysql")));
+    it.live("atLeast waits for several receipts on MySQL", severalReceipts(onMysql("dqm_mysql")));
+    it.live("a guarded, paged query on MySQL", guarded(onMysql("dqg_mysql")));
+    it.live("a restart does not run a command or a projection write twice on MySQL", () =>
+      restart(() => singleRunner("dqr_mysql").pipe(Layer.provideMerge(sqlClient(MYSQL_URL!)))).pipe(
+        Effect.scoped,
+        Effect.provide(clean("dqr_mysql").pipe(Layer.provide(sqlClient(MYSQL_URL!)))),
       ),
     );
   });
