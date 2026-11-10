@@ -325,5 +325,6 @@ export const BankLive = Bank.layer(BankHandlers).pipe(
 - Tests: `Domain.Cluster.layerSingleRunner({ runnerStorage: "memory" })` on `SqliteClient.layer({ filename: ":memory:" })` gives each test a fresh database.
 - Several runners: create the tables in a deploy step (`Cluster.layerMigrations()` with the cluster's `SqlMessageStorage.layerMigrations` and `SqlRunnerStorage.layerMigrations`), then run `Cluster.layer({ migrations: false })`. On MySQL and MariaDB this step is required.
 - Live reads poll the database every 250 ms (`watchMillis`) for commits of other runners.
+- Postgres schema: `Cluster.layer({ schema: "domain" })` puts the host's tables in `domain.domain_*` and creates the schema when it is missing. The cluster's own tables (`SqlMessageStorage`, `SqlRunnerStorage`) take no schema: give their connection a `search_path` (`PgClient.layer({ startupParameters: { search_path: "domain" } })`). Shard locks on Postgres are advisory locks, which belong to the whole database, not to a schema: two clusters in one database need different `SqlRunnerStorage` prefixes.
 
 More: [Effect Cluster and SQL](https://alchemy.run/domain/cluster), [Create the tables in a deploy step](https://alchemy.run/domain/cluster#create-the-tables-in-a-deploy-step).

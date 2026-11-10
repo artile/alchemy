@@ -76,6 +76,20 @@ export interface Options {
    */
   readonly tablePrefix?: string;
   /**
+   * The schema of the host's tables: `<schema>.<prefix>_aggregates`, …. On
+   * Postgres the host creates the schema when it is missing; on MySQL and
+   * MariaDB it is a database. Without it, the tables go where the
+   * connection puts them (the `search_path` on Postgres, the connected
+   * database on MySQL). It does not move the cluster's own tables
+   * (`SqlMessageStorage`, `SqlRunnerStorage`), whose names cannot carry a
+   * schema: on Postgres, give their connection a `search_path`. Two models on
+   * one cluster are kept apart by `tablePrefix`, not by the schema, and two
+   * clusters in one Postgres database by the cluster's prefix: its shard locks
+   * are advisory locks of the whole database.
+   * @default the connection's schema
+   */
+  readonly schema?: string;
+  /**
    * Create the host's tables when the Layer builds. Set `false` when
    * {@link layerMigrations} runs in a deploy step.
    * @default true
@@ -285,30 +299,68 @@ const DRAIN_BATCH = 100;
 
 // ---------------------------------------------------------------- tables
 
-const tableNames = (prefix: string) => ({
-  aggregates: `${prefix}_aggregates`,
-  events: `${prefix}_events`,
-  receipts: `${prefix}_receipts`,
-  schedules: `${prefix}_schedules`,
-  outbox: `${prefix}_outbox`,
-  views: `${prefix}_views`,
-  viewEntries: `${prefix}_view_entries`,
-  projections: `${prefix}_projections`,
-  projectionInputs: `${prefix}_projection_inputs`,
-  streams: `${prefix}_streams`,
-  streamEntries: `${prefix}_stream_entries`,
-  migrations: `${prefix}_migrations`,
-});
+/** The host's table names, qualified by `schema` when one is given. */
+const tableNames = (prefix: string, schema?: string) => {
+  const name = (table: string) =>
+    schema === undefined ? `${prefix}_${table}` : `${schema}.${prefix}_${table}`;
+  return {
+    aggregates: name("aggregates"),
+    events: name("events"),
+    receipts: name("receipts"),
+    schedules: name("schedules"),
+    outbox: name("outbox"),
+    views: name("views"),
+    viewEntries: name("view_entries"),
+    projections: name("projections"),
+    projectionInputs: name("projection_inputs"),
+    streams: name("streams"),
+    streamEntries: name("stream_entries"),
+    migrations: name("migrations"),
+  };
+};
+
+/**
+ * Create `schema` when it is missing, on Postgres and MySQL. Two runners that
+ * start at once may both try: on Postgres `IF NOT EXISTS` can still fail on
+ * the catalog's unique index, so a failure is fine when the schema is there.
+ */
+const ensureSchema = (schema: string | undefined) =>
+  Effect.gen(function* () {
+    if (schema === undefined) return;
+    const sql = (yield* SqlClient.SqlClient).withoutTransforms();
+    const create = sql.onDialectOrElse({
+      pg: () => sql.unsafe(`CREATE SCHEMA IF NOT EXISTS ${schema}`),
+      mysql: () => sql.unsafe(`CREATE SCHEMA IF NOT EXISTS ${schema}`),
+      orElse: () => undefined,
+    });
+    if (create === undefined) return;
+    yield* create.pipe(
+      Effect.catch((error) =>
+        sql<{
+          found: number;
+        }>`SELECT 1 AS found FROM information_schema.schemata WHERE schema_name = ${schema}`.pipe(
+          Effect.flatMap((rows) => (rows.length > 0 ? Effect.void : Effect.fail(error))),
+        ),
+      ),
+    );
+  });
 
 /**
  * The host's migrations, for a project that runs one `Migrator` for every
  * schema. History goes in the migrator's table; {@link layerMigrations} and
  * {@link layer} use `<prefix>_migrations`.
  */
-export const migrations = (options?: { readonly tablePrefix?: string }): Migrator.Loader => {
-  const t = tableNames(options?.tablePrefix ?? "domain");
+export const migrations = (options?: {
+  readonly tablePrefix?: string;
+  readonly schema?: string;
+}): Migrator.Loader => {
+  const prefix = options?.tablePrefix ?? "domain";
+  const t = tableNames(prefix, options?.schema);
+  // An index name carries no schema: the index goes in its table's schema.
+  const bare = tableNames(prefix);
   return Migrator.fromRecord({
     "0001_create_tables": Effect.gen(function* () {
+      yield* ensureSchema(options?.schema);
       const sql = (yield* SqlClient.SqlClient).withoutTransforms();
       // MySQL TEXT holds 64 KB; a JSON state can be larger.
       const text = sql.onDialectOrElse({
@@ -376,19 +428,26 @@ export const migrations = (options?: { readonly tablePrefix?: string }): Migrato
         `name ${name}, id ${id}, seq INTEGER NOT NULL, event ${text} NOT NULL, envelope ${text} NOT NULL, PRIMARY KEY (name, id, seq)`,
       );
       // The migrator runs each migration once, so the indexes need no IF NOT EXISTS.
-      yield* sql.unsafe(`CREATE INDEX ${t.outbox}_origin_idx ON ${t.outbox} (origin, seq)`);
-      yield* sql.unsafe(`CREATE INDEX ${t.outbox}_at_idx ON ${t.outbox} (at)`);
-      yield* sql.unsafe(`CREATE INDEX ${t.receipts}_at_idx ON ${t.receipts} (at)`);
-      yield* sql.unsafe(`CREATE INDEX ${t.schedules}_due_idx ON ${t.schedules} (due)`);
+      yield* sql.unsafe(`CREATE INDEX ${bare.outbox}_origin_idx ON ${t.outbox} (origin, seq)`);
+      yield* sql.unsafe(`CREATE INDEX ${bare.outbox}_at_idx ON ${t.outbox} (at)`);
+      yield* sql.unsafe(`CREATE INDEX ${bare.receipts}_at_idx ON ${t.receipts} (at)`);
+      yield* sql.unsafe(`CREATE INDEX ${bare.schedules}_due_idx ON ${t.schedules} (due)`);
     }),
   });
 };
 
-const runMigrations = (prefix: string) =>
-  Migrator.make({})({
-    loader: migrations({ tablePrefix: prefix }),
-    table: tableNames(prefix).migrations,
-  }).pipe(Effect.asVoid, Effect.orDie);
+const runMigrations = (prefix: string, schema?: string) =>
+  // The history table lives in the schema too, so the schema comes first.
+  ensureSchema(schema).pipe(
+    Effect.andThen(
+      Migrator.make({})({
+        loader: migrations({ tablePrefix: prefix, schema }),
+        table: tableNames(prefix, schema).migrations,
+      }),
+    ),
+    Effect.asVoid,
+    Effect.orDie,
+  );
 
 /**
  * Create the host's tables and nothing else, for a deploy step that runs
@@ -415,8 +474,9 @@ const runMigrations = (prefix: string) =>
  */
 export const layerMigrations = (options?: {
   readonly tablePrefix?: string;
+  readonly schema?: string;
 }): Layer.Layer<never, never, SqlClient.SqlClient> =>
-  Layer.effectDiscard(runMigrations(options?.tablePrefix ?? "domain"));
+  Layer.effectDiscard(runMigrations(options?.tablePrefix ?? "domain", options?.schema));
 
 // ---------------------------------------------------------------- the platform
 
@@ -479,7 +539,7 @@ const make = (options: Options, models: Set<string>) =>
       messages: sql(`${options.clusterTablePrefix ?? "cluster"}_messages`),
       replies: sql(`${options.clusterTablePrefix ?? "cluster"}_replies`),
     };
-    const t = tableNames(prefix);
+    const t = tableNames(prefix, options.schema);
     const table = {
       aggregates: sql(t.aggregates),
       events: sql(t.events),
@@ -497,7 +557,7 @@ const make = (options: Options, models: Set<string>) =>
     const typeOf = (kind: string, name: string) =>
       prefix === "domain" ? `Domain.${kind}/${name}` : `Domain.${kind}/${prefix}/${name}`;
 
-    if (options.migrations !== false) yield* runMigrations(prefix);
+    if (options.migrations !== false) yield* runMigrations(prefix, options.schema);
 
     const now = Clock.currentTimeMillis;
     /**
@@ -1580,7 +1640,7 @@ const make = (options: Options, models: Set<string>) =>
  * For one process, use {@link layerSingleRunner}, which brings the cluster.
  *
  * ### Hosting on several runners
- * **Example:** Runners on one Postgres database
+ * **Example:** Runners on one Postgres database, every table in the `domain` schema
  * ```typescript
  * import * as Cluster from "@alchemy.run/domain/Cluster";
  * import { BunClusterSocket } from "@effect/platform-bun";
@@ -1590,9 +1650,15 @@ const make = (options: Options, models: Set<string>) =>
  * import { Bank, BankPolicies } from "./Bank.ts";
  *
  * export const BankLive = Bank.layer(BankPolicies).pipe(
- *   Layer.provide(Cluster.layer()),
+ *   Layer.provide(Cluster.layer({ schema: "domain" })),
  *   Layer.provide(BunClusterSocket.layer()),
- *   Layer.provide(PgClient.layerConfig({ url: Config.Redacted("DATABASE_URL") })),
+ *   // The cluster's own tables follow the connection's search_path.
+ *   Layer.provide(
+ *     PgClient.layerConfig({
+ *       url: Config.Redacted("DATABASE_URL"),
+ *       startupParameters: Config.succeed({ search_path: "domain" }),
+ *     }),
+ *   ),
  * );
  * ```
  *
@@ -1641,6 +1707,7 @@ const cacheKey = (options: Options): string => {
         : "infinity";
   return JSON.stringify([
     options.tablePrefix ?? "domain",
+    options.schema ?? null,
     options.clusterTablePrefix ?? "cluster",
     options.migrations !== false,
     options.watchMillis ?? 250,
