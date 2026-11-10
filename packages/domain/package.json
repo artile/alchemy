@@ -56,6 +56,7 @@
         "bun": "./src/Rivet/index.ts",
         "default": "./lib/Rivet/index.js"
       },
+      "./internal/*": null,
       "./internal": null,
       "./*": {
         "types": "./lib/*.d.ts",
