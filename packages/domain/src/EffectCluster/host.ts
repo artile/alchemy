@@ -28,7 +28,7 @@ import {
   type ObjectStateShape,
   parseMultiplexedName,
 } from "../DurableObjects.ts";
-import { migrate, objectStorage, TABLE } from "./internal.ts";
+import { migrate, objectStorage, type Storage, TABLE } from "./internal.ts";
 
 /**
  * Wake an instance at `at`: a persisted message delivered when it is due,
@@ -204,6 +204,8 @@ export interface InstanceOptions {
   readonly objects: EffectEntity.Entity<string, DomainRpcs>;
   /** The database every instance keeps its storage in. */
   readonly sql: Effect.Effect<SqlClient>;
+  /** The schema and name of the storage table. */
+  readonly storage?: Storage;
   /** The class an entity id names, once the model's Layer has declared it. */
   readonly classOf: (className: string) => Effect.Effect<InstanceBuild | undefined>;
 }
@@ -224,7 +226,7 @@ const runtimeOf = (name: string): Effect.Effect<BaseRuntimeContext> =>
  * One instance of the model's entity: the object its entity id names, with
  * its storage, its input gate and its alarm.
  */
-export const makeInstance = ({ name, objects, sql, classOf }: InstanceOptions) =>
+export const makeInstance = ({ name, objects, sql, classOf, storage: tables }: InstanceOptions) =>
   Effect.gen(function* () {
     const address = yield* EffectEntity.CurrentAddress;
     const id = address.entityId;
@@ -241,7 +243,7 @@ export const makeInstance = ({ name, objects, sql, classOf }: InstanceOptions) =
     }
     const client = yield* sql;
     const gate = yield* makeInputGate;
-    const storage = objectStorage(client, `${name}/${id}`, gate);
+    const storage = objectStorage(client, `${name}/${id}`, gate, tables);
     const instanceScope = yield* Scope.Scope;
     const wakes = yield* objects.client;
     const callbacks = alarmCallbacks(storage, {

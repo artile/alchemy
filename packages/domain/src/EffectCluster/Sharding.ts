@@ -25,7 +25,7 @@ import {
 } from "../DurableObjects.ts";
 import type { Platform } from "../Platform.ts";
 import { claimOf, entity, type InstanceBuild, makeInstance, migrate, remote } from "./host.ts";
-import { type Retention, sweep } from "./internal.ts";
+import { type Retention, type Storage, sweep, tableOf } from "./internal.ts";
 
 /** Options for {@link layerSharding}. */
 export interface ShardingOptions {
@@ -50,6 +50,17 @@ export interface ShardingOptions {
    * @default { receipts: "30 days", deliveries: "7 days", cancelled: "7 days", messages: "7 days", interval: "1 hour" }
    */
   readonly retention?: Retention;
+  /**
+   * The Postgres schema of the host's table, as for `layerEntities`. Make it
+   * with {@link layerMigrationsOf} of the same `schema` and `table`.
+   * @default the connection's search path (usually `public`)
+   */
+  readonly schema?: string;
+  /**
+   * The name of the host's table.
+   * @default "alchemy_domain_objects"
+   */
+  readonly table?: string;
   /**
    * How often a failed policy delivery runs again before it is given up, as
    * for `layerEntities`. `false` retries it until it succeeds.
@@ -142,6 +153,9 @@ export const layerSharding = (
     Effect.gen(function* () {
       const { name, shardGroup } = options;
       const classWait = Duration.fromInputUnsafe(options.classWait ?? "30 seconds");
+      const tables: Storage = { schema: options.schema, table: options.table };
+      // A bad name fails here, when the Layer builds, not on the first call.
+      yield* Effect.sync(() => tableOf(tables));
       const policyRetry =
         options.policyRetry === false ? undefined : (options.policyRetry ?? POLICY_RETRY);
       const sharding = yield* Sharding.Sharding;
@@ -169,7 +183,7 @@ export const layerSharding = (
           });
         yield* sharding.registerEntity(
           objects,
-          makeInstance({ name, objects, sql: Effect.succeed(sql), classOf }).pipe(
+          makeInstance({ name, objects, sql: Effect.succeed(sql), classOf, storage: tables }).pipe(
             Effect.provideService(Sharding.Sharding, sharding),
           ),
           // The model's objects call each other, and a call can come back to
@@ -179,7 +193,7 @@ export const layerSharding = (
         );
         // A sweep that fails runs at the next interval.
         yield* Effect.forkScoped(
-          sweep(sql, name, options.retention).pipe(
+          sweep(sql, name, options.retention, tables).pipe(
             Effect.catchCause((cause) =>
               Effect.logWarning(`Cluster.Entity '${name}': retention sweep failed`, cause),
             ),
@@ -254,3 +268,16 @@ export const layerMigrations: Layer.Layer<never, SqlError, SqlClient> = Layer.ef
     yield* migrate(yield* SqlClient);
   }),
 );
+
+/**
+ * {@link layerMigrations} for a host table in its own `schema` or under its
+ * own `table` name: pass the same options as {@link layerSharding}.
+ *
+ * @layer
+ */
+export const layerMigrationsOf = (storage: Storage): Layer.Layer<never, SqlError, SqlClient> =>
+  Layer.effectDiscard(
+    Effect.gen(function* () {
+      yield* migrate(yield* SqlClient, storage);
+    }),
+  );

@@ -54,12 +54,17 @@ import {
   WORKFLOWS,
   workflowsObject,
 } from "./host.ts";
-import { type Retention, sweep } from "./internal.ts";
+import { type Retention, type Storage, sweep, tableOf } from "./internal.ts";
 
-export type { Retention } from "./internal.ts";
+export { InvalidStorageName, type Retention } from "./internal.ts";
 
 export { DomainClassNotHosted, DomainEngineNotStarted } from "./host.ts";
-export { layerMigrations, layerSharding, type ShardingOptions } from "./Sharding.ts";
+export {
+  layerMigrations,
+  layerMigrationsOf,
+  layerSharding,
+  type ShardingOptions,
+} from "./Sharding.ts";
 
 /** Calls through an entity's namespace: Effect Cluster's own routing, or the pool's gateway. */
 const namespaceCall =
@@ -165,6 +170,17 @@ export interface EntitiesOptions<PoolReq> {
    */
   readonly retention?: Retention;
   /**
+   * The Postgres schema of the host's table. The host makes it when it is
+   * missing. Effect Cluster's own tables stay where the runner puts them.
+   * @default the connection's search path (usually `public`)
+   */
+  readonly schema?: string;
+  /**
+   * The name of the host's table.
+   * @default "alchemy_domain_objects"
+   */
+  readonly table?: string;
+  /**
    * How often a policy delivery whose handler fails runs again before it is
    * given up: retried on `schedule` at most `times` times, then the failure
    * is logged and the next delivery to the same key runs. `false` keeps a
@@ -245,6 +261,9 @@ export const layerEntities = <PoolReq>(
   Layer.unwrap(
     Effect.gen(function* () {
       const name = options.name;
+      const tables: Storage = { schema: options.schema, table: options.table };
+      // A bad name fails here, when the Layer builds, not on the first call.
+      yield* Effect.sync(() => tableOf(tables));
       const policyRetry =
         options.policyRetry === false ? undefined : (options.policyRetry ?? POLICY_RETRY);
       // In this pool's shard group, as the runner registers its entities.
@@ -270,7 +289,7 @@ export const layerEntities = <PoolReq>(
           const url = yield* Config.Redacted("CLUSTER_DATABASE_URL");
           const context = yield* Layer.buildWithScope(PgClient.layer({ url }), scope);
           const client = Context.get(context, SqlClient);
-          yield* migrate(client);
+          yield* migrate(client, tables);
           return client;
         }).pipe(Effect.orDie),
       );
@@ -286,6 +305,7 @@ export const layerEntities = <PoolReq>(
         objects,
         sql,
         classOf: (cls) => Effect.succeed(classes.get(cls)),
+        storage: tables,
       });
 
       const Objects = (Entity as any)()(
@@ -330,7 +350,7 @@ export const layerEntities = <PoolReq>(
             yield* Deferred.succeed(engine, clusterEngine);
             // Each runner sweeps on its own; a sweep that fails runs at the next interval.
             yield* Effect.forkScoped(
-              Effect.flatMap(sql, (client) => sweep(client, name, options.retention)).pipe(
+              Effect.flatMap(sql, (client) => sweep(client, name, options.retention, tables)).pipe(
                 Effect.catchCause((cause) =>
                   Effect.logWarning(`Cluster.Entity '${name}': retention sweep failed`, cause),
                 ),
