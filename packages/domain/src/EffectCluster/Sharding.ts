@@ -24,7 +24,15 @@ import {
   type PolicyRetry,
 } from "../DurableObjects.ts";
 import type { Platform } from "../Platform.ts";
-import { claimOf, entity, type InstanceBuild, makeInstance, migrate, remote } from "./host.ts";
+import {
+  claimOf,
+  entity,
+  type InstanceBuild,
+  makeInstance,
+  migrate,
+  remote,
+  withStepIds,
+} from "./host.ts";
 import { type Retention, type Storage, sweep, tableOf } from "./internal.ts";
 
 /** Options for {@link layerSharding}. */
@@ -226,11 +234,36 @@ export const layerSharding = (
         makePlatform(host),
         Layer.succeed(
           WorkflowEngine.WorkflowEngine,
-          shardGroup === undefined ? engine : placeWorkflows(engine, shardGroup),
+          stepIdsFor(
+            shardGroup === undefined ? engine : placeWorkflows(engine, shardGroup),
+            engine,
+          ),
         ),
       ).pipe(Layer.provideMerge(SecureRandom.layerWebCrypto));
     }),
   );
+
+/** `base`, with each saga's steps run under their own command ids ({@link withStepIds}). */
+const stepIdsFor = (
+  base: WorkflowEngine.WorkflowEngine["Service"],
+  engine: WorkflowEngine.WorkflowEngine["Service"],
+): WorkflowEngine.WorkflowEngine["Service"] => {
+  const runs = withStepIds(engine);
+  return WorkflowEngine.WorkflowEngine.of({
+    ...base,
+    register: ((
+      workflow: Workflow.Any,
+      execute: (payload: any, id: string) => Effect.Effect<any, any, any>,
+    ) =>
+      base.register(
+        workflow as never,
+        ((payload: unknown, id: string) =>
+          execute(payload, id).pipe(
+            Effect.provideService(WorkflowEngine.WorkflowEngine, runs),
+          )) as never,
+      )) as never,
+  });
+};
 
 /** The engine, with every saga's runs routed to `shardGroup`. */
 const placeWorkflows = (

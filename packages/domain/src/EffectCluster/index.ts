@@ -52,13 +52,20 @@ import {
   migrate,
   remote,
   WORKFLOWS,
+  withStepIds,
   workflowsObject,
 } from "./host.ts";
 import { type Retention, type Storage, sweep, tableOf } from "./internal.ts";
 
 export { InvalidStorageName, type Retention } from "./internal.ts";
 
-export { DomainClassNotHosted, DomainEngineNotStarted } from "./host.ts";
+export {
+  DomainClassNotHosted,
+  DomainEngineNotStarted,
+  DomainHostSqlUnavailable,
+  HostSql,
+  hostSql,
+} from "./host.ts";
 export {
   layerMigrations,
   layerMigrationsOf,
@@ -345,8 +352,15 @@ export const layerEntities = <PoolReq>(
           hosted,
           Effect.gen(function* () {
             const clusterEngine = yield* WorkflowEngine.WorkflowEngine;
+            const runs = withStepIds(clusterEngine);
             for (const [workflow, execute] of yield* Ref.get(registrations))
-              yield* clusterEngine.register(workflow as never, execute as never);
+              yield* clusterEngine.register(
+                workflow as never,
+                ((payload: unknown, id: string) =>
+                  execute(payload, id).pipe(
+                    Effect.provideService(WorkflowEngine.WorkflowEngine, runs),
+                  )) as never,
+              );
             yield* Deferred.succeed(engine, clusterEngine);
             // Each runner sweeps on its own; a sweep that fails runs at the next interval.
             yield* Effect.forkScoped(
