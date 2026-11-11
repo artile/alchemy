@@ -209,7 +209,8 @@ DomainCluster.layerEntities({
 });
 ```
 
-Each name is a plain identifier, with no dot. Effect Cluster's own `cluster_*` tables stay where the runner makes them. A host that changes these options starts on an empty table: copy the rows across first. 
+Each name is a plain identifier, with no dot. Effect Cluster's own `cluster_*` tables stay where the runner makes them. A host that changes these options starts on an empty table: copy the rows across first.
+
 ## Write a projection's rows with its progress
 
 A projection's handler that writes through `DomainCluster.hostSql` writes in the same Postgres transaction that records the projection's progress. Its rows and its checkpoint commit together; a run that fails leaves no row, and runs again:

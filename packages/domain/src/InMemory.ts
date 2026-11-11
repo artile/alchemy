@@ -364,7 +364,7 @@ export const make = (
         {
           run: Effect.suspend(() => {
             started();
-            return Effect.forkDetach(pollsWait(run).pipe(Effect.ensuring(stopped))).pipe(
+            return Effect.forkDetach(run.pipe(pollsWait, Effect.ensuring(stopped))).pipe(
               Effect.asVoid,
             );
           }),
@@ -1110,7 +1110,7 @@ export const make = (
                       return;
                     }
                     const run = p.log.slice(p.processed, p.processed + size);
-                    yield* pollsWait(kit.run(key, run));
+                    yield* kit.run(key, run).pipe(pollsWait);
                     p.processed += run.length;
                     for (const { delivery } of run) {
                       p.checkpoints[delivery.source] = Math.max(
@@ -1288,7 +1288,7 @@ export const make = (
             receive: (delivery) =>
               Effect.suspend(() => {
                 started();
-                return exclusively(lockFor(delivery.key))(pollsWait(kit.run(delivery))).pipe(
+                return exclusively(lockFor(delivery.key))(kit.run(delivery).pipe(pollsWait)).pipe(
                   Effect.catchCause((cause) =>
                     Effect.sync(() => failures.push(cause)).pipe(
                       Effect.andThen(Effect.logError(`policy ${kit.name} failed`, cause)),
