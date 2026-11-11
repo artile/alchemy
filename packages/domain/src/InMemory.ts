@@ -1,3 +1,4 @@
+import * as Clock from "effect/Clock";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -139,6 +140,8 @@ export const make = (
   // lock, or their turn). Every change wakes `quiet`.
   let running = 0;
   let suspended = 0;
+  // Runs that poll for another run's work: waiting for `quiet`, not for `idle`.
+  let polling = 0;
   let changed = Deferred.makeUnsafe<void>();
   const notify = () => {
     const was = changed;
@@ -167,11 +170,41 @@ export const make = (
       );
     });
   /**
+   * A poll for another run's work. The queue goes on while it polls (`quiet`),
+   * so the run it waits for can start; the platform is not `idle` until it
+   * ends. Each pause between its tries ends at the next change of the platform
+   * (a run that starts, waits or ends), so it sees the work at once.
+   */
+  const poll = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+    Effect.clockWith((clock) =>
+      Effect.suspend(() => {
+        polling++;
+        notify();
+        return Effect.provideService(effect, Clock.Clock, {
+          currentTimeMillisUnsafe: () => clock.currentTimeMillisUnsafe(),
+          currentTimeMillis: clock.currentTimeMillis,
+          currentTimeNanosUnsafe: () => clock.currentTimeNanosUnsafe(),
+          currentTimeNanos: clock.currentTimeNanos,
+          monotonicTimeNanosUnsafe: () => clock.monotonicTimeNanosUnsafe(),
+          monotonicTimeNanos: clock.monotonicTimeNanos,
+          sleep: (duration) =>
+            Effect.suspend(() => Effect.raceFirst(clock.sleep(duration), Deferred.await(changed))),
+        }).pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              polling--;
+              notify();
+            }),
+          ),
+        );
+      }),
+    );
+  /**
    * With `manual`: a run that polls for another run's work (a read `atLeast` a
    * write) waits, so the queue goes on and the run it waits for can start.
    */
   const pollsWait = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
-    options.manual ? Effect.provideService(effect, RunWait, waiting) : effect;
+    options.manual ? Effect.provideService(effect, RunWait, poll) : effect;
   /** Run `effect` holding `lock`, counted as waiting while another run holds it. */
   const exclusively =
     (lock: Semaphore.Semaphore) =>
@@ -188,7 +221,7 @@ export const make = (
       .pipe(Effect.flatMap((taken) => (taken ? Effect.void : waiting(lock.take(1)))));
   /** Wait until every forked run is finished or waiting. */
   const quiet: Effect.Effect<void> = Effect.suspend(function wait(): Effect.Effect<void> {
-    if (running === suspended) return Effect.void;
+    if (running === suspended + polling) return Effect.void;
     return Deferred.await(changed).pipe(Effect.flatMap(wait));
   });
   const failures: Array<unknown> = [];
