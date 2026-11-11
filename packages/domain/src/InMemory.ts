@@ -26,6 +26,7 @@ import {
   type StreamMeta,
   type ViewEntry,
   type ViewSnapshot,
+  RunWait,
 } from "./Platform.ts";
 
 /**
@@ -165,6 +166,12 @@ export const make = (
         ),
       );
     });
+  /**
+   * With `manual`: a run that polls for another run's work (a read `atLeast` a
+   * write) waits, so the queue goes on and the run it waits for can start.
+   */
+  const pollsWait = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+    options.manual ? Effect.provideService(effect, RunWait, waiting) : effect;
   /** Run `effect` holding `lock`, counted as waiting while another run holds it. */
   const exclusively =
     (lock: Semaphore.Semaphore) =>
@@ -324,7 +331,9 @@ export const make = (
         {
           run: Effect.suspend(() => {
             started();
-            return Effect.forkDetach(run.pipe(Effect.ensuring(stopped))).pipe(Effect.asVoid);
+            return Effect.forkDetach(pollsWait(run).pipe(Effect.ensuring(stopped))).pipe(
+              Effect.asVoid,
+            );
           }),
           label: `saga ${key}`,
           lane: `saga:${key}`,
@@ -1068,7 +1077,7 @@ export const make = (
                       return;
                     }
                     const run = p.log.slice(p.processed, p.processed + size);
-                    yield* kit.run(key, run);
+                    yield* pollsWait(kit.run(key, run));
                     p.processed += run.length;
                     for (const { delivery } of run) {
                       p.checkpoints[delivery.source] = Math.max(
@@ -1246,7 +1255,7 @@ export const make = (
             receive: (delivery) =>
               Effect.suspend(() => {
                 started();
-                return exclusively(lockFor(delivery.key))(kit.run(delivery)).pipe(
+                return exclusively(lockFor(delivery.key))(pollsWait(kit.run(delivery))).pipe(
                   Effect.catchCause((cause) =>
                     Effect.sync(() => failures.push(cause)).pipe(
                       Effect.andThen(Effect.logError(`policy ${kit.name} failed`, cause)),
