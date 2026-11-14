@@ -6,7 +6,6 @@ sidebar:
 ---
 
 import Terminal from "../../../../components/Terminal.astro";
-import PackageManagers from "../../../../components/PackageManagers.astro";
 
 In [Part 3](/aws/tutorial/part-3) you wrote integration tests against
 a deployed stack. But so far everything has landed in a single
@@ -18,28 +17,32 @@ the infrastructure.
 ## The default stage
 
 You've been using stages all along. If you don't pass `--stage`,
-Alchemy deploys to **`live_$USER`** (e.g. `live_sam`):
+Alchemy deploys to **`dev_$USER`** (e.g. `dev_sam`):
 
-<PackageManagers script={`$ whoami
+```sh
+$ whoami
 sam
 
-$ {run} alchemy deploy
-# deploys to stage \`live_sam\``} />
+$ bun alchemy deploy
+# deploys to stage `dev_sam`
+```
 
 Each developer on your team automatically gets a personal sandbox
 without any config. The resolution order is:
 
 1. `--stage <name>` flag
-2. `$ALCHEMY_STAGE` environment variable
-3. `live_${USER}` (or `live_${USERNAME}` on Windows)
-4. `live_unknown` if no user is set
+2. `$STAGE` environment variable
+3. `dev_${USER}` (or `dev_${USERNAME}` on Windows)
+4. `dev_unknown` if no user is set
 
 ## Deploy a second stage
 
 Pass `--stage` to deploy a completely separate instance of the same
 program:
 
-<PackageManagers run="alchemy deploy --stage staging" />
+```sh
+bun alchemy deploy --stage staging
+```
 
 <Terminal content={`[u]Plan[/u]: [g]2 to create[/g]
 [g]+[/g] [b]Api[/b] [d](AWS.Lambda.Function)[/d]
@@ -88,19 +91,19 @@ to the surrounding Stack context, including the current `stage`:
 
 ```diff lang="typescript"
 // src/api.ts
-import * as AWS from "@alchemy.run/aws";
-import * as S3 from "@alchemy.run/aws/S3";
+import * as AWS from "alchemy/AWS";
+import * as S3 from "alchemy/AWS/S3";
 +import { Stack } from "alchemy/Stack";
 import * as Effect from "effect/Effect";
 // ...
 
 export default class Api extends AWS.Lambda.Function<Api>()(
   "Api",
--  { main: import.meta.url, functionUrl: true },
+-  { main: import.meta.url, url: true },
 +  Stack.useSync((stack) => ({
 +    main: import.meta.url,
-+    functionUrl: true,
-+    memorySize: stack.stage === "prod" ? 1024 : 512,
++    url: true,
++    memory: stack.stage === "prod" ? 1024 : 512,
 +  })),
   Effect.gen(function* () {
     /* ... */
@@ -116,24 +119,26 @@ configuration, no separate config files.
 
 When you're done with an environment, tear down just that stage:
 
-<PackageManagers run="alchemy destroy --stage staging" />
+```sh
+bun alchemy destroy --stage staging
+```
 
 The plan lists everything in `staging` for deletion and leaves every
 other stage alone.
 
 ## Stages in tests
 
-The test harness from Part 3 defaults to `test_$USER` (e.g.
-`test_sam`). Override it per file — or per call — which is how
-multiple CI runs can test in parallel against the same AWS account
-without colliding:
+The test harness from Part 3 defaults to a stage named `test`. You
+can override it per file — or per call — which is how multiple CI
+runs can test in parallel against the same AWS account without
+colliding:
 
 ```diff lang="typescript"
 // test/integ.test.ts
 const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
   providers: AWS.providers(),
   state: AWS.state(),
-+  stage: `pr-${process.env.PR_NUMBER}`,
++  stage: process.env.STAGE ?? "test",
 });
 ```
 

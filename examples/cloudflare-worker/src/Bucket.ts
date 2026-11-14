@@ -1,3 +1,3 @@
-import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Cloudflare from "alchemy/Cloudflare";
 
-export const Bucket = Cloudflare.R2.Bucket("Bucket", { forceDestroy: true });
+export const Bucket = Cloudflare.R2.Bucket("Bucket");

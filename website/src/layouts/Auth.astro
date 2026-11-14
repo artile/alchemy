@@ -2,7 +2,6 @@
 import "../styles/tokens.css";
 import ThemeProvider from "../components/ThemeProvider.astro";
 import Logo from "../components/marketing/Logo.astro";
-import BrandIcons from "../brand/Icons.astro";
 
 export interface Props {
   title: string;
@@ -22,15 +21,13 @@ const {
 ---
 
 <!doctype html>
-<html lang="en" data-theme="dark">
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <ThemeProvider />
     <title>{title} — Alchemy</title>
-    {/* OAuth device-flow landing pages: no standalone content worth indexing. */}
-    <meta name="robots" content="noindex, follow" />
-    <BrandIcons />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   </head>
   <body class="alc-auth-body">
     <main class="alc-auth">

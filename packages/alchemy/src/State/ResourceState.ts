@@ -16,7 +16,9 @@ export type Props = Record<string, any>;
 export type Attr = Record<string, any>;
 
 export type ResourceStatus = ResourceState["status"];
-export type ReplacementResourceState = ReplacingResourceState | ReplacedResourceState;
+export type ReplacementResourceState =
+  | ReplacingResourceState
+  | ReplacedResourceState;
 export type ReplacementOldResourceState =
   | CreatingResourceState
   | CreatedResourceState
@@ -52,13 +54,9 @@ interface BaseResourceState {
   /** Desired state (input props) of this Resource */
   props?: Props;
   /** The output attributes of this Resource (if it has been created) */
-  attr?: Attr | undefined;
+  attr?: Attr;
   /** The removal policy of the resource */
   removalPolicy?: RemovalPolicy["Service"];
-  /** Attr-less lookup could recover the predecessor migrated away from this FQN. */
-  adoptionBlocked?: "migrated-fqn";
-  /** Unresolved props were stripped from this attr-less checkpoint; they cannot identify it. */
-  propsIncomplete?: true;
   /**
    * The {@link ProviderMode} this resource was last reconciled with.
    *
@@ -70,12 +68,8 @@ interface BaseResourceState {
    *
    * `undefined` means either a mode-agnostic provider (single
    * implementation serves both dev and deploy) or a legacy row written
-   * before modes were persisted — both acted on the real cloud, so an
-   * unstamped row is assumed **live**, unless its attrs carry a local
-   * identity marker (`dev:`-prefixed ids) proving it was reconciled
-   * locally, in which case it is assumed **local** (see `stampedMode`).
-   * Same-mode runs see no churn; a run in the other mode replaces it like
-   * any stamped row.
+   * before modes were persisted — both are treated as "whatever the
+   * current run's mode is" (no replacement churn).
    */
   providerMode?: ProviderMode;
 }

@@ -1,19 +1,18 @@
-import * as AWS from "@alchemy.run/aws";
-import * as Cloudflare from "@alchemy.run/cloudflare";
-import * as Clock from "effect/Clock";
+import * as AWS from "alchemy/AWS";
+import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
-import * as FetchHttpClient from "effect/http/FetchHttpClient";
-import * as HttpBody from "effect/http/HttpBody";
-import * as HttpClient from "effect/http/HttpClient";
-import { HttpServerRequest } from "effect/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Layer from "effect/Layer";
 import type * as Redacted from "effect/Redacted";
 import * as Schedule from "effect/Schedule";
+import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+import * as HttpBody from "effect/unstable/http/HttpBody";
+import * as HttpClient from "effect/unstable/http/HttpClient";
+import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import { BunMicrovm } from "./bun-image.ts";
+import { ExternalMicrovm } from "./external-image.ts";
 import { EffectfulBun } from "./effectful-bun.ts";
 import { EffectfulNode } from "./effectful-node.ts";
-import { ExternalMicrovm } from "./external-image.ts";
 import { NodeMicrovm } from "./node-image.ts";
 import { OpencodeMicrovm } from "./opencode-image.ts";
 
@@ -29,7 +28,9 @@ type Variant = {
   readonly run: (
     req: AWS.Lambda.RunMicrovmRequest,
   ) => Effect.Effect<{ microvmId: string; endpoint: string }, any>;
-  readonly get: (req: { microvmIdentifier: string }) => Effect.Effect<{ state: string }, any>;
+  readonly get: (req: {
+    microvmIdentifier: string;
+  }) => Effect.Effect<{ state: string }, any>;
   readonly auth: (req: {
     microvmIdentifier: string;
     expirationInMinutes: number;
@@ -40,7 +41,9 @@ type Variant = {
     },
     any
   >;
-  readonly term: (req: { microvmIdentifier: string }) => Effect.Effect<unknown, any>;
+  readonly term: (req: {
+    microvmIdentifier: string;
+  }) => Effect.Effect<unknown, any>;
   readonly reachable: (
     endpoint: string,
     authToken: Record<string, string | Redacted.Redacted<string> | undefined>,
@@ -53,7 +56,10 @@ export default Cloudflare.Worker(
   Effect.gen(function* () {
     const rawReachable = (
       endpoint: string,
-      authToken: Record<string, string | Redacted.Redacted<string> | undefined>,
+      authToken: Record<
+        string,
+        string | Redacted.Redacted<string> | undefined
+      >,
     ) =>
       Effect.gen(function* () {
         const client = yield* HttpClient.HttpClient;
@@ -131,11 +137,16 @@ export default Cloudflare.Worker(
             // base64("opencode:bench")
             authorization: "Basic b3BlbmNvZGU6YmVuY2g=",
           };
-          const health = yield* client.get(`https://${endpoint}/global/health`, { headers });
+          const health = yield* client.get(
+            `https://${endpoint}/global/health`,
+            { headers },
+          );
           const healthBody = yield* health.text;
           if (health.status !== 200 || !healthBody.includes('"healthy":true')) {
             return yield* Effect.fail(
-              new Error(`opencode health ${health.status}: ${healthBody.slice(0, 120)}`),
+              new Error(
+                `opencode health ${health.status}: ${healthBody.slice(0, 120)}`,
+              ),
             );
           }
           const session = yield* client.post(`https://${endpoint}/session`, {
@@ -145,7 +156,9 @@ export default Cloudflare.Worker(
           const sessionBody = yield* session.text;
           if (session.status !== 200 || !sessionBody.includes('"id"')) {
             return yield* Effect.fail(
-              new Error(`opencode session ${session.status}: ${sessionBody.slice(0, 120)}`),
+              new Error(
+                `opencode session ${session.status}: ${sessionBody.slice(0, 120)}`,
+              ),
             );
           }
           return sessionBody;
@@ -163,7 +176,7 @@ export default Cloudflare.Worker(
 
     const boot = (v: Variant) =>
       Effect.gen(function* () {
-        const start = yield* Clock.currentTimeMillis;
+        const start = yield* Effect.sync(() => Date.now());
         const vm = yield* v.run({
           idlePolicy: {
             maxIdleDurationSeconds: 900,
@@ -174,7 +187,9 @@ export default Cloudflare.Worker(
         return yield* Effect.gen(function* () {
           yield* v.get({ microvmIdentifier: vm.microvmId }).pipe(
             Effect.flatMap((m) =>
-              m.state === "RUNNING" ? Effect.void : Effect.fail(new Error(`microvm ${m.state}`)),
+              m.state === "RUNNING"
+                ? Effect.void
+                : Effect.fail(new Error(`microvm ${m.state}`)),
             ),
             Effect.retry({
               schedule: Schedule.spaced("500 millis"),
@@ -192,10 +207,12 @@ export default Cloudflare.Worker(
               times: 14,
             }),
           );
-          const readyMs = (yield* Clock.currentTimeMillis) - start;
+          const readyMs = (yield* Effect.sync(() => Date.now())) - start;
           return yield* HttpServerResponse.json({ id: vm.microvmId, readyMs });
         }).pipe(
-          Effect.onError(() => v.term({ microvmIdentifier: vm.microvmId }).pipe(Effect.ignore)),
+          Effect.onError(() =>
+            v.term({ microvmIdentifier: vm.microvmId }).pipe(Effect.ignore),
+          ),
           Effect.provide(FetchHttpClient.layer),
         );
       });

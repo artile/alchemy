@@ -1,12 +1,12 @@
-import { expect } from "bun:test";
-import * as Cloudflare from "@alchemy.run/cloudflare";
-import * as Drizzle from "@alchemy.run/drizzle";
-import * as Test from "@alchemy.run/test/Bun";
 import * as Alchemy from "alchemy";
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Drizzle from "alchemy/Drizzle";
+import * as Test from "alchemy/Test/Bun";
+import { expect } from "bun:test";
 import * as Effect from "effect/Effect";
-import * as HttpClient from "effect/http/HttpClient";
-import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as Layer from "effect/Layer";
+import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import Stack from "../alchemy.run.ts";
 import type { Post, User } from "../src/schema.ts";
 
@@ -47,7 +47,9 @@ test(
     };
     expect(Array.isArray(initialBody.users)).toBe(true);
 
-    const createResponse = yield* HttpClient.execute(HttpClientRequest.post(baseUrl));
+    const createResponse = yield* HttpClient.execute(
+      HttpClientRequest.post(baseUrl),
+    );
     expect(createResponse.status).toBe(200);
 
     const createBody = (yield* createResponse.json) as unknown as {
@@ -79,7 +81,9 @@ test(
       error: "Invalid user ID",
     });
 
-    const methodResponse = yield* HttpClient.execute(HttpClientRequest.patch(baseUrl));
+    const methodResponse = yield* HttpClient.execute(
+      HttpClientRequest.patch(baseUrl),
+    );
     expect(methodResponse.status).toBe(405);
     expect(yield* methodResponse.json).toEqual({
       error: "Method not allowed",
@@ -104,7 +108,9 @@ test(
     const finalBody = (yield* finalResponse.json) as unknown as {
       users: User[];
     };
-    expect(finalBody.users.some((user) => user.id === createdUser.id)).toBe(false);
+    expect(finalBody.users.some((user) => user.id === createdUser.id)).toBe(
+      false,
+    );
   }),
   { timeout: 120_000 },
 );

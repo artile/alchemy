@@ -1,4 +1,4 @@
-import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Cloudflare from "alchemy/Cloudflare";
 
 /**
  * Queue resource used by the Api worker as a producer (via

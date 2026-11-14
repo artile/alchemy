@@ -2,7 +2,6 @@
 title: Preview branches per PR
 description: Keep one long-lived Neon project in a staging stage and fork a copy-on-write branch per PR stage — isolated preview databases in seconds, destroyed with the stage.
 ---
-import PackageManagers from "../../../../components/PackageManagers.astro";
 
 Provisioning a whole `Neon.Project` per PR preview is slow and
 wasteful — every stage pays for cluster creation, runs into
@@ -18,14 +17,14 @@ The project is a normal resource, created once by the stage that
 owns it:
 
 ```typescript
-import * as Neon from "@alchemy.run/neon";
+import * as Neon from "alchemy/Neon";
 
 const project = yield* Neon.Project("app-db", {
   region: "aws-us-east-1",
 });
 ```
 
-Deploy it with `alchemy deploy --stage staging`. The state for
+Deploy it with `bun alchemy deploy --stage staging`. The state for
 `Neon.Project("app-db")` lands in the `staging` state file — that's
 what PR stages will look up.
 
@@ -42,7 +41,7 @@ const { stage } = yield* Alchemy.Stack;
 ```
 
 `stage` is whatever was passed to
-`alchemy deploy --stage <name>` — `staging`, `prod`, or
+`bun alchemy deploy --stage <name>` — `staging`, `prod`, or
 `pr-147`.
 
 ## Reference the project from PR stages
@@ -91,7 +90,7 @@ converged as part of the deploy:
 ```typescript
 const branch = yield* Neon.Branch("app-branch", {
   project,
-  migrations: "./migrations",
+  migrationsDir: "./migrations",
 });
 ```
 
@@ -119,7 +118,9 @@ deploy updates the branch in place.
 
 ## Tear a preview down
 
-<PackageManagers run="alchemy destroy --stage pr-147" />
+```sh
+bun alchemy destroy --stage pr-147
+```
 
 Destroy deletes the stage's resources — including its branch — but
 leaves the referenced project untouched: the PR stage doesn't own

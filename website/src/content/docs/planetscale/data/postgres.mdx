@@ -2,7 +2,6 @@
 title: Postgres
 description: PlanetScale Postgres as Stack resources — databases, branches, roles with least-privilege inherited roles, and direct vs pooled connection origins.
 ---
-import Tree from "../../../../components/diagrams/Tree.astro";
 
 PlanetScale Postgres is managed PostgreSQL with database branching. In
 alchemy the database, its branches, and the roles that connect to them
@@ -14,47 +13,18 @@ Lambda) as typed outputs.
 New here? [Set up credentials](/planetscale/setup) first. For the
 MySQL (Vitess) family, see [MySQL](/planetscale/data/mysql).
 
-<Tree
-  nodes={[
-    { id: "db", label: "app", type: "PostgresDatabase · PS_10" },
-    { id: "main", label: "main", type: "branch · production", parent: "db" },
-    { id: "r1", label: "app_rw", type: "PostgresRole", parent: "main", tone: "accent" },
-    { id: "pr", label: "pr-42", type: "branch · preview stage", parent: "db" },
-    { id: "r2", label: "app_rw", type: "PostgresRole", parent: "pr", tone: "accent" },
-  ]}
-  caption="The database is the long-lived cluster. Each branch is its own Postgres with its own roles, so a preview stage forks a branch, connects with a role on it, and deletes both when it goes."
-/>
-
 ## Create a database
 
 `PostgresDatabase` owns the long-lived cluster. `clusterSize` is
-required.
-
-Network-attached (NAS) sizes like `"PS_10"` are expanded to the full
-SKU using the target region and architecture:
+required; short sizes like `"PS_10"` are expanded to the full SKU
+using the target region and architecture:
 
 ```typescript
-import * as Planetscale from "@alchemy.run/planetscale";
+import * as Planetscale from "alchemy/Planetscale";
 
 const database = yield* Planetscale.PostgresDatabase("app-db", {
   region: { slug: "us-east" },
   clusterSize: "PS_10",
-});
-```
-
-[PlanetScale Metal](https://planetscale.com/docs/metal) is supported
-too. Metal uses locally-attached NVMe, so the API needs the **full
-SKU** — CPU series, compute size, provider, architecture, and drive
-size — not a short `"M-10"` name. Copy a SKU from
-[Postgres pricing](https://planetscale.com/docs/postgres/pricing) or
-your org's `list_cluster_size_skus` response; hyphens from the docs
-are normalized to underscores:
-
-```typescript
-const metal = yield* Planetscale.PostgresDatabase("app-db-metal", {
-  region: { slug: "us-east" },
-  clusterSize: "M1_10_AWS_ARM_D_METAL_10",
-  arch: "arm",
 });
 ```
 
@@ -80,7 +50,7 @@ const branch = yield* Planetscale.PostgresBranch("app-branch", {
 
 `parentBranch` defaults to `"main"` and also accepts another
 `PostgresBranch`, so branches can chain. Branches take the same
-`migrations` / `importFiles` props as the database — see
+`migrationsDir` / `importFiles` props as the database — see
 [Migrations](/planetscale/data/migrations) for how SQL files are hashed
 and applied, and the
 [branch from a shared database](/cloudflare/data/branch-from-shared-database)
@@ -157,7 +127,7 @@ into consumers like [Cloudflare Hyperdrive](/cloudflare/data/hyperdrive):
   direct connection, e.g. Hyperdrive's local-dev origin.
 
 ```typescript
-import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Cloudflare from "alchemy/Cloudflare";
 
 const hyperdrive = yield* Cloudflare.Hyperdrive.Connection("app-hyperdrive", {
   origin: role.origin, // direct — Hyperdrive pools at the edge
@@ -169,34 +139,9 @@ If you need a URL instead of components, `connectionUrl` and
 `connectionUrlPooled` carry the same direct/pooled endpoints as
 `Redacted` connection strings (`sslmode=verify-full`).
 
-## Connect privately with AWS PrivateLink
-
-Postgres roles expose the branch's provider-neutral private connection
-details. For AWS PrivateLink, pass `privateConnectionServiceName` to
-an Interface VPC endpoint. With private DNS enabled, use
-`privateHost` for workloads in that VPC:
-
-```typescript
-import * as AWS from "@alchemy.run/aws";
-
-const endpoint = yield* AWS.EC2.VpcEndpoint("postgres-private-link", {
-  vpcId: vpc.vpcId,
-  serviceName: role.privateConnectionServiceName,
-  vpcEndpointType: "Interface",
-  subnetIds: [privateSubnet.subnetId],
-  securityGroupIds: [databaseSecurityGroup.groupId],
-  privateDnsEnabled: true,
-});
-```
-
-For GCP Private Service Connect, `privateHost` is the private DNS zone;
-prepend the endpoint name configured in GCP before connecting.
-`PostgresDefaultRole` exposes the same details, though `PostgresRole`
-remains the safer choice for applications.
-
 ## Where next
 
-- [Migrations](/planetscale/data/migrations) — `migrations` and
+- [Migrations](/planetscale/data/migrations) — `migrationsDir` and
   `importFiles` on databases and branches.
 - [Hyperdrive](/cloudflare/data/hyperdrive) — edge-pooled connections from
   Workers to your PlanetScale database.

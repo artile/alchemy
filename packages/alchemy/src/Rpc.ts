@@ -1,17 +1,15 @@
 import * as Cause from "effect/Cause";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
-import * as HttpClientRequest from "effect/http/HttpClientRequest";
-import type * as HttpClientResponse from "effect/http/HttpClientResponse";
-import { HttpServerRequest } from "effect/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
-import * as Scope from "effect/Scope";
 import * as Sink from "effect/Sink";
-import * as Socket from "effect/socket/Socket";
 import * as Stream from "effect/Stream";
+import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import type * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as Socket from "effect/unstable/socket/Socket";
 import type { HttpEffect } from "./Http.ts";
 
 export type Rpc<Shape> = {
@@ -70,15 +68,15 @@ export class RpcDecodeError extends Data.TaggedError("RpcDecodeError")<{
   readonly cause: unknown;
 }> {
   override get message() {
-    return this.cause instanceof Error ? this.cause.message : String(this.cause);
+    return this.cause instanceof Error
+      ? this.cause.message
+      : String(this.cause);
   }
 }
 
 export class RpcCallError extends Data.TaggedError("RpcCallError")<{
   readonly method: string;
   readonly cause: unknown;
-  /** The HTTP status the transport answered with, when the failure was a response. */
-  readonly status?: number | undefined;
 }> {
   override get message() {
     return `RPC call to "${this.method}" failed: ${
@@ -87,11 +85,15 @@ export class RpcCallError extends Data.TaggedError("RpcCallError")<{
   }
 }
 
-export class RpcRemoteStreamError extends Data.TaggedError("RpcRemoteStreamError")<{
+export class RpcRemoteStreamError extends Data.TaggedError(
+  "RpcRemoteStreamError",
+)<{
   readonly error: unknown;
 }> {}
 
-export const isRpcStreamErrorMarker = (value: unknown): value is RpcStreamErrorMarker =>
+export const isRpcStreamErrorMarker = (
+  value: unknown,
+): value is RpcStreamErrorMarker =>
   typeof value === "object" &&
   value !== null &&
   "_tag" in value &&
@@ -105,7 +107,9 @@ export const isRpcErrorEnvelope = (value: unknown): value is RpcErrorEnvelope =>
   value._tag === ErrorTag &&
   "error" in value;
 
-export const isRpcStreamEnvelope = (value: unknown): value is RpcStreamEnvelope =>
+export const isRpcStreamEnvelope = (
+  value: unknown,
+): value is RpcStreamEnvelope =>
   typeof value === "object" &&
   value !== null &&
   "_tag" in value &&
@@ -181,15 +185,18 @@ export const decodeRpcByteStream = <E>(
 export const fromRpcReadableStream = (
   body: ReadableStream<Uint8Array>,
   encoding: StreamEncoding,
-): Stream.Stream<any, Socket.SocketError | RpcDecodeError | RpcRemoteStreamError> =>
+): Stream.Stream<
+  any,
+  Socket.SocketError | RpcDecodeError | RpcRemoteStreamError
+> =>
   decodeRpcByteStream(
     Stream.fromReadableStream({
       evaluate: () => body,
       onError: (cause) =>
         Socket.isSocketError(cause)
           ? cause
-          : Socket.SocketError.make({
-              reason: Socket.SocketReadError.make({ cause }),
+          : new Socket.SocketError({
+              reason: new Socket.SocketReadError({ cause }),
             }),
     }),
     encoding,
@@ -197,8 +204,10 @@ export const fromRpcReadableStream = (
 
 export const fromRpcStreamEnvelope = (
   envelope: RpcStreamEnvelope,
-): Stream.Stream<any, Socket.SocketError | RpcDecodeError | RpcRemoteStreamError> =>
-  fromRpcReadableStream(envelope.body, envelope.encoding);
+): Stream.Stream<
+  any,
+  Socket.SocketError | RpcDecodeError | RpcRemoteStreamError
+> => fromRpcReadableStream(envelope.body, envelope.encoding);
 
 export const decodeRpcValue = (value: unknown) => {
   if (isRpcStreamEnvelope(value)) {
@@ -213,98 +222,14 @@ export const decodeRpcValue = (value: unknown) => {
 };
 
 /**
- * A tagged-error class an RPC surface can declare (e.g. a Durable Object's
- * `errors` prop) so failures crossing the RPC boundary are reconstructed as
- * real class instances instead of the plain `{ _tag, ...fields }` objects
- * {@link encodeRpcError} produces. `identifier` is the static tag that
- * `Schema.TaggedError` classes carry; other classes match by class `name`.
- */
-export interface RpcErrorClass {
-  new (props: never): unknown;
-  readonly identifier?: string;
-}
-
-/**
- * Build a reviver from declared error classes: a failure shaped
- * `{ _tag, ...fields }` whose tag matches a declared class is
- * reconstructed via that class's constructor (both sides of the RPC import
- * the same class declaration, so the schema is shared by construction).
- * Unmatched or already-revived errors pass through untouched.
- */
-export const makeRpcErrorReviver = (
-  errors: ReadonlyArray<RpcErrorClass> | undefined,
-): ((error: unknown) => unknown) => {
-  if (errors === undefined || errors.length === 0) {
-    return (error) => error;
-  }
-  const byTag = new Map<string, RpcErrorClass>();
-  for (const cls of errors) {
-    byTag.set(cls.identifier ?? cls.name, cls);
-  }
-  return (error) => {
-    if (typeof error !== "object" || error === null || !("_tag" in error)) {
-      return error;
-    }
-    const cls = byTag.get((error as { _tag: string })._tag);
-    if (cls === undefined || error instanceof cls) {
-      return error;
-    }
-    try {
-      return new (cls as new (props: unknown) => unknown)(error);
-    } catch {
-      // A malformed wire object must not turn into a defect here — the
-      // caller still sees the raw envelope error.
-      return error;
-    }
-  };
-};
-
-/**
- * Wrap a finished RPC stub so every method's failure channel runs through
- * {@link makeRpcErrorReviver}: engines whose stub factory does not decode
- * with a reviver itself (fetch-RPC, an engine gateway client) get declared
- * error classes reconstructed uniformly. Without declared errors the stub
- * is returned as-is.
- */
-export const reviveRpcStubErrors = <Shape>(
-  stub: Shape,
-  errors: ReadonlyArray<RpcErrorClass> | undefined,
-): Shape => {
-  if (errors === undefined || errors.length === 0) {
-    return stub;
-  }
-  const revive = makeRpcErrorReviver(errors);
-  return new Proxy(stub as object, {
-    get: (target, prop) => {
-      const member = Reflect.get(target, prop);
-      if (typeof member !== "function") {
-        return member;
-      }
-      return (...args: readonly unknown[]) => {
-        const result = member.apply(target, args);
-        return Effect.isEffect(result)
-          ? asEffectOrStream(
-              // oxlint-disable-next-line effecttsgo/unsafe-effect-type-assertion -- an untyped remote stub's result; failures are revived below
-              (result as Effect.Effect<unknown, unknown>).pipe(Effect.mapError(revive)),
-            )
-          : result;
-      };
-    },
-  }) as Shape;
-};
-
-/**
  * Decode an RPC return value, lifting error envelopes into the Effect
  * error channel so that remote `Effect.fail(...)` values are recoverable.
- * When `revive` is given (see {@link makeRpcErrorReviver}), envelope errors
- * are reconstructed as their declared error classes.
  */
 export const decodeRpcResult = (
   value: unknown,
-  revive?: (error: unknown) => unknown,
 ): Effect.Effect<unknown, unknown> => {
   if (isRpcErrorEnvelope(value)) {
-    return Effect.fail(revive === undefined ? value.error : revive(value.error));
+    return Effect.fail(value.error);
   }
   return Effect.succeed(decodeRpcValue(value));
 };
@@ -326,63 +251,56 @@ const encodeStreamErrorMarker = (cause: Cause.Cause<unknown>): string => {
 };
 
 const appendStreamErrors = <R>(s: Stream.Stream<string, unknown, R>) =>
-  s.pipe(Stream.catchCause((cause) => cause.pipe(encodeStreamErrorMarker, Stream.succeed)));
+  s.pipe(
+    Stream.catchCause((cause) =>
+      Stream.succeed(encodeStreamErrorMarker(cause)),
+    ),
+  );
 
 export const toRpcStream = (stream: Stream.Stream<any, any, any>) =>
-  Effect.suspend(() => {
-    // A peeled remainder is only valid while its scope is open. Transfer
-    // that scope to the response body instead of closing it on return.
-    const scope = Scope.makeUnsafe();
-    const toBody = (body: Stream.Stream<Uint8Array, any>) =>
-      body.pipe(
-        Stream.onExit((exit) => Scope.close(scope, exit)),
-        Stream.toReadableStream(),
-      );
-    return Effect.gen(function* () {
-      const [head, rest] = yield* Stream.peel(stream, Sink.head()).pipe(
-        Effect.provideService(Scope.Scope, scope),
-      );
+  Effect.scoped(
+    Effect.gen(function* () {
+      const [head, rest] = yield* Stream.peel(stream, Sink.head());
 
       if (Option.isSome(head) && head.value instanceof Uint8Array) {
         return {
           _tag: StreamTag,
           encoding: "bytes",
-          body: toBody(rest.pipe(Stream.prepend([head.value]))),
+          body: Stream.toReadableStream(
+            rest.pipe(Stream.prepend([head.value])),
+          ),
         } satisfies RpcStreamEnvelope;
       }
 
-      const body = Option.isSome(head) ? rest.pipe(Stream.prepend([head.value])) : rest;
+      const body = Option.isSome(head)
+        ? rest.pipe(Stream.prepend([head.value]))
+        : rest;
 
       return {
         _tag: StreamTag,
         encoding: "jsonl",
-        body: toBody(
-          body.pipe(
-            Stream.map((value) => JSON.stringify(value) + "\n"),
-            appendStreamErrors,
-            Stream.encodeText,
-          ),
+        body: Stream.toReadableStream(
+          appendStreamErrors(
+            body.pipe(Stream.map((value) => JSON.stringify(value) + "\n")),
+          ).pipe(Stream.encodeText),
         ),
       } satisfies RpcStreamEnvelope;
-    }).pipe(
-      Effect.onExit((exit) => (Exit.isFailure(exit) ? Scope.close(scope, exit) : Effect.void)),
-    );
-  }).pipe(
+    }),
+  ).pipe(
     Effect.catchCause((cause) => {
       const failReason = cause.reasons.find(Cause.isFailReason);
       if (failReason) {
         return Effect.succeed({
           _tag: StreamTag,
           encoding: "jsonl",
-          body: cause.pipe(
-            encodeStreamErrorMarker,
-            Stream.succeed,
-            Stream.encodeText,
-            Stream.toReadableStream(),
+          body: Stream.toReadableStream(
+            Stream.succeed(encodeStreamErrorMarker(cause)).pipe(
+              Stream.encodeText,
+            ),
           ),
         } satisfies RpcStreamEnvelope);
       }
-      return cause.pipe(Cause.squash, Effect.die);
+      return Effect.die(Cause.squash(cause));
     }),
   );
 
@@ -409,27 +327,12 @@ const isRpcBytesChunk = (value: unknown): value is RpcBytesChunk =>
   "b64" in value;
 
 const toBase64 = (bytes: Uint8Array): string => {
-  const encode = (bytes as Uint8Array & { toBase64?: () => string }).toBase64;
-  if (typeof encode === "function") return encode.call(bytes);
-
   let binary = "";
   for (const byte of bytes) binary += String.fromCharCode(byte);
   return btoa(binary);
 };
 
 const fromBase64 = (b64: string): Uint8Array => {
-  const decode = (
-    Uint8Array as Uint8ArrayConstructor & { fromBase64?: (value: string) => Uint8Array }
-  ).fromBase64;
-  if (typeof b64 === "string" && typeof decode === "function") {
-    try {
-      return decode.call(Uint8Array, b64);
-    } catch {
-      // Preserve atob's InvalidCharacterError and coercion semantics for bad
-      // wire values; fromBase64 uses SyntaxError instead. Valid input stays
-      // on the native path without an intermediate binary string.
-    }
-  }
   const binary = atob(b64);
   const out = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i);
@@ -476,7 +379,9 @@ export const decodeRpcResponseStream = <E>(
     Stream.flatMap((value) =>
       isRpcStreamErrorMarker(value)
         ? Stream.fail(new RpcRemoteStreamError({ error: value.error }))
-        : Stream.succeed(isRpcBytesChunk(value) ? fromBase64(value.b64) : value),
+        : Stream.succeed(
+            isRpcBytesChunk(value) ? fromBase64(value.b64) : value,
+          ),
     ),
   );
 
@@ -500,7 +405,9 @@ export const asEffectOrStream = (
   call: Effect.Effect<unknown, unknown>,
 ): Effect.Effect<unknown, unknown> => {
   const streamForm = Stream.unwrap(
-    Effect.map(call, (value) => (Stream.isStream(value) ? value : Stream.succeed(value))),
+    Effect.map(call, (value) =>
+      Stream.isStream(value) ? value : Stream.succeed(value),
+    ),
   );
   return Object.assign(call, {
     [StreamTypeId]: (streamForm as any)[StreamTypeId],
@@ -519,27 +426,6 @@ export const asEffectOrStream = (
 export const RPC_PATH_PREFIX = "/__rpc__/";
 /** Response header flag marking an NDJSON streamed body (vs a JSON value). */
 export const RPC_STREAM_HEADER = "x-alchemy-rpc-stream";
-
-/**
- * The RPC method a request addresses, or `undefined` when the request is
- * not an RPC call. Matches the {@link RPC_PATH_PREFIX} on the URL's
- * *pathname* only — a query string or fragment containing the prefix is
- * not a dispatch.
- */
-export const rpcMethodOf = (request: { readonly url: string }): string | undefined => {
-  // String scanning, not `new URL`: this runs on every RPC request.
-  const { url } = request;
-  let end = url.length;
-  for (const delimiter of ["?", "#"]) {
-    const at = url.indexOf(delimiter);
-    if (at !== -1 && at < end) end = at;
-  }
-  const prefixAt = url.indexOf(RPC_PATH_PREFIX);
-  if (prefixAt === -1 || prefixAt + RPC_PATH_PREFIX.length > end) {
-    return undefined;
-  }
-  return decodeURIComponent(url.slice(prefixAt + RPC_PATH_PREFIX.length, end));
-};
 
 /**
  * Build a typed RPC stub over a plain `fetch` transport. Any property that
@@ -568,26 +454,32 @@ export const makeFetchRpcStub = <Shape>(options: {
           Effect.gen(function* () {
             const request = HttpClientRequest.post(
               `${baseUrl}${RPC_PATH_PREFIX}${encodeURIComponent(prop)}`,
-            ).pipe(HttpClientRequest.bodyText(JSON.stringify(args), "application/json"));
+            ).pipe(
+              HttpClientRequest.bodyText(
+                JSON.stringify(args),
+                "application/json",
+              ),
+            );
             const response = yield* options
               .fetch(request)
-              .pipe(Effect.mapError((cause) => new RpcCallError({ method: prop, cause })));
+              .pipe(
+                Effect.mapError(
+                  (cause) => new RpcCallError({ method: prop, cause }),
+                ),
+              );
 
-            if (response.status < 200 || response.status >= 300) {
-              return yield* new RpcCallError({
-                method: prop,
-                cause: `HTTP ${response.status}`,
-                status: response.status,
-              });
-            }
-
-            const headers = response.headers as Record<string, string | undefined>;
+            const headers = response.headers as Record<
+              string,
+              string | undefined
+            >;
             if (headers[RPC_STREAM_HEADER] !== undefined) {
               return decodeRpcResponseStream(response.stream);
             }
 
             const value = yield* response.json.pipe(
-              Effect.mapError((cause) => new RpcCallError({ method: prop, cause })),
+              Effect.mapError(
+                (cause) => new RpcCallError({ method: prop, cause }),
+              ),
             );
             return yield* decodeRpcResult(value);
           }),
@@ -609,14 +501,17 @@ export const serveRpc = <Req = never>(
 ): HttpEffect<Req> =>
   Effect.gen(function* () {
     const request = yield* HttpServerRequest;
-    const name = rpcMethodOf(request);
-    if (name === undefined) {
+    const prefixAt = request.url.indexOf(RPC_PATH_PREFIX);
+    if (prefixAt === -1) {
       return yield* fallback;
     }
 
-    // A name like `constructor`, `toString` or `__proto__` must not reach
-    // `Object.prototype`.
-    const method = name in Object.prototype ? undefined : shape[name];
+    let name = request.url.slice(prefixAt + RPC_PATH_PREFIX.length);
+    const queryAt = name.indexOf("?");
+    if (queryAt !== -1) name = name.slice(0, queryAt);
+    name = decodeURIComponent(name);
+
+    const method = shape[name];
     if (typeof method !== "function") {
       return HttpServerResponse.text(`Unknown RPC method "${name}"`, {
         status: 404,
@@ -663,7 +558,9 @@ export const serveRpc = <Req = never>(
       return streamResponse(invoked);
     }
 
-    const result = yield* Effect.result(invoked as Effect.Effect<unknown, unknown>);
+    const result = yield* Effect.result(
+      invoked as Effect.Effect<unknown, unknown>,
+    );
     if (Result.isSuccess(result)) {
       // The resolved value may itself be a `Stream` (e.g. a forwarded nested
       // *streaming* RPC, where the inner call resolves to a `Stream`) — encode

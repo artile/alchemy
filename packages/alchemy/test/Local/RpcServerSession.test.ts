@@ -1,9 +1,12 @@
-import { describe, expect, it } from "@alchemy.run/test";
+import {
+  makeServerRpcSession,
+  type ServerWebSocketLike,
+} from "@/Local/RpcServerSession.ts";
+import { describe, expect, it } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import { makeServerRpcSession, type ServerWebSocketLike } from "@/Local/RpcServerSession.ts";
 
-describe("Local.RpcServerSession", { tags: ["unit", "local"] }, () => {
+describe("Local.RpcServerSession", () => {
   it.effect("happy path: paired sessions round-trip a method call", () =>
     Effect.gen(function* () {
       const mainA = { ping: async (x: number) => x + 1 };
@@ -88,7 +91,10 @@ describe("Local.RpcServerSession", { tags: ["unit", "local"] }, () => {
  * can drive `RpcSession.getRemoteMain()` end-to-end without touching the
  * platform WS server.
  */
-const pairSessions = <A extends Record<string, any>, B extends Record<string, any>>(
+const pairSessions = <
+  A extends Record<string, any>,
+  B extends Record<string, any>,
+>(
   mainA: A,
   mainB: B,
 ) => {

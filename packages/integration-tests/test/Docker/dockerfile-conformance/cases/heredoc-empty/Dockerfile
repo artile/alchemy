@@ -1,3 +1,0 @@
-FROM alpine
-RUN <<EMPTY
-EMPTY

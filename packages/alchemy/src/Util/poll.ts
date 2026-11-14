@@ -40,7 +40,8 @@ export const poll = Effect.fn("poll")(
       Effect.retry({
         while: isPredicateFailed,
         schedule:
-          input.schedule ?? Schedule.max([Schedule.spaced("5 seconds"), Schedule.recurs(50)]),
+          input.schedule ??
+          Schedule.max([Schedule.spaced("5 seconds"), Schedule.recurs(50)]),
       }),
     ),
 );

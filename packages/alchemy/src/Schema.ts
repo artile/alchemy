@@ -9,10 +9,14 @@ export * from "effect/Schema";
 export const isNullishSchema = (schema: S.Schema<any>) =>
   isNullSchema(schema) || isUndefinedSchema(schema);
 export const isNullSchema = (schema: S.Schema<any>) => AST.isNull(schema.ast);
-export const isUndefinedSchema = (schema: S.Schema<any>) => AST.isUndefined(schema.ast);
-export const isBooleanSchema = (schema: S.Schema<any>) => AST.isBoolean(schema.ast);
-export const isStringSchema = (schema: S.Schema<any>) => AST.isString(schema.ast);
-export const isNumberSchema = (schema: S.Schema<any>) => AST.isNumber(schema.ast);
+export const isUndefinedSchema = (schema: S.Schema<any>) =>
+  AST.isUndefined(schema.ast);
+export const isBooleanSchema = (schema: S.Schema<any>) =>
+  AST.isBoolean(schema.ast);
+export const isStringSchema = (schema: S.Schema<any>) =>
+  AST.isString(schema.ast);
+export const isNumberSchema = (schema: S.Schema<any>) =>
+  AST.isNumber(schema.ast);
 
 export const isRecordLikeSchema = (schema: S.Schema<any>) =>
   isMapSchema(schema) ||
@@ -21,8 +25,14 @@ export const isRecordLikeSchema = (schema: S.Schema<any>) =>
   isClassSchema(schema) ||
   false;
 
-export const isMapSchema = (schema: S.Schema<any>): boolean =>
-  getDeclarationRepresentationId(schema.ast) === "effect/schema/ReadonlyMap";
+export const isMapSchema = (schema: S.Schema<any>): boolean => {
+  const ast = schema.ast;
+  if (AST.isDeclaration(ast)) {
+    const typeConstructor = (ast.annotations as any)?.typeConstructor;
+    return typeConstructor?._tag === "ReadonlyMap";
+  }
+  return false;
+};
 
 export const isClassSchema = (schema: S.Schema<any>) => {
   const ast = schema.ast;
@@ -32,27 +42,26 @@ export const isClassSchema = (schema: S.Schema<any>) => {
   return false;
 };
 
-export const isStructSchema = (schema: S.Schema<any>) => AST.isObjects(schema.ast);
+export const isStructSchema = (schema: S.Schema<any>) => {
+  return AST.isObjects(schema.ast);
+};
 
 export const isRecordSchema = (schema: S.Schema<any>) => {
   const ast = schema.ast;
   return AST.isObjects(ast) && ast.indexSignatures?.length > 0;
 };
 
-export const isListSchema = (schema: S.Schema<any>) => AST.isArrays(schema.ast);
+export const isListSchema = (schema: S.Schema<any>) => {
+  return AST.isArrays(schema.ast);
+};
 
-export const isSetSchema = (schema: S.Schema<any>): boolean =>
-  getDeclarationRepresentationId(schema.ast) === "effect/schema/ReadonlySet";
-
-/**
- * Effect's built-in declaration schemas (ReadonlyMap, ReadonlySet, ...) carry a
- * `representation` annotation identifying the underlying type constructor.
- */
-const getDeclarationRepresentationId = (ast: AST.AST): string | undefined => {
+export const isSetSchema = (schema: S.Schema<any>): boolean => {
+  const ast = schema.ast;
   if (AST.isDeclaration(ast)) {
-    return (ast.annotations as any)?.representation?.id;
+    const typeConstructor = (ast.annotations as any)?.typeConstructor;
+    return typeConstructor?._tag === "ReadonlySet";
   }
-  return undefined;
+  return false;
 };
 
 export const getSetValueAST = (schema: S.Schema<any>): AST.AST | undefined => {
@@ -65,7 +74,9 @@ export const getSetValueAST = (schema: S.Schema<any>): AST.AST | undefined => {
 
 /** A Schema representing a Schema */
 export type Field = S.Top;
-export const Field = S.suspend((): [Field] extends [any] ? S.Schema<Field> : never => S.Any);
+export const Field = S.suspend(
+  (): [Field] extends [any] ? S.Schema<Field> : never => S.Any,
+);
 
 type FunctionType = (...args: any[]) => any;
 export type Function<F extends FunctionType = FunctionType> = S.Schema<F>;
@@ -102,7 +113,11 @@ export type SchemaWithTemplate<
   references: References;
 };
 
-export type SchemaExt = FunctionSchema | EffectSchema | StreamSchema | SinkSchema;
+export type SchemaExt =
+  | FunctionSchema
+  | EffectSchema
+  | StreamSchema
+  | SinkSchema;
 
 export interface SchemaExtBase<A> extends S.Schema<A> {
   <References extends any[]>(
@@ -116,7 +131,9 @@ export interface FunctionSchema<
   Output extends S.Top = S.Top,
 > extends SchemaExtBase<
   (
-    ...args: Input extends undefined ? [] : [input: S.Schema.Type<Exclude<Input, undefined>>]
+    ...args: Input extends undefined
+      ? []
+      : [input: S.Schema.Type<Exclude<Input, undefined>>]
   ) => S.Schema.Type<Output>
 > {
   input: Input;
@@ -127,7 +144,9 @@ export interface EffectSchema<
   A extends S.Top = S.Top,
   Err extends S.Top = S.Top,
   Req extends S.Top = S.Top,
-> extends SchemaExtBase<Effect<S.Schema.Type<A>, S.Schema.Type<Err>, S.Schema.Type<Req>>> {
+> extends SchemaExtBase<
+  Effect<S.Schema.Type<A>, S.Schema.Type<Err>, S.Schema.Type<Req>>
+> {
   A: A;
   Err: Err;
   Req: Req;
@@ -137,7 +156,9 @@ export interface StreamSchema<
   A extends S.Top = S.Top,
   Err extends S.Top = S.Top,
   Req extends S.Top = S.Top,
-> extends SchemaExtBase<Stream<S.Schema.Type<A>, S.Schema.Type<Err>, S.Schema.Type<Req>>> {
+> extends SchemaExtBase<
+  Stream<S.Schema.Type<A>, S.Schema.Type<Err>, S.Schema.Type<Req>>
+> {
   A: A;
   Err: Err;
   Req: Req;
@@ -165,20 +186,23 @@ export interface SinkSchema<
   Req: Req;
 }
 
-export const makeExtSchema = <Schema extends SchemaExt>(schema: Schema): SchemaExt => {
+export const makeExtSchema = <Schema extends SchemaExt>(
+  schema: Schema,
+): SchemaExt => {
   const s = S.Any.annotate({
     aspect: schema,
   });
   return new Proxy(() => {}, {
     get: (_target, prop) => s[prop as keyof typeof s],
-    apply: (_target, _thisArg, [template, ...references]) =>
-      S.annotate({
+    apply: (_target, _thisArg, [template, ...references]) => {
+      return S.annotate({
         aspect: {
           ...schema,
           template,
           references,
         },
-      }),
+      });
+    },
   }) as any as SchemaExt;
 };
 
@@ -195,7 +219,10 @@ export interface func<
       : (input: S.Schema.Type<Extract<Input, S.Top>>) => S.Schema.Type<Output>
 > {}
 
-type TypeArray<T extends S.Top[]> = T extends [infer Head, ...infer Tail extends S.Top[]]
+type TypeArray<T extends S.Top[]> = T extends [
+  infer Head,
+  ...infer Tail extends S.Top[],
+]
   ? Head extends S.Top
     ? [S.Schema.Type<Head>, ...TypeArray<Tail>]
     : never
@@ -237,7 +264,11 @@ export const func: {
     },
   })) as any;
 
-export interface effect<A extends S.Top, Err extends S.Top, Req extends S.Top> extends S.Schema<
+export interface effect<
+  A extends S.Top,
+  Err extends S.Top,
+  Req extends S.Top,
+> extends S.Schema<
   Effect<S.Schema.Type<A>, S.Schema.Type<Err>, S.Schema.Type<Req>>
 > {}
 

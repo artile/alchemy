@@ -1,7 +1,3 @@
-import { describe, expect, it } from "@alchemy.run/test";
-import * as ConfigProvider from "effect/ConfigProvider";
-import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import { AlchemyContext } from "@/AlchemyContext.ts";
 import {
   fromEnv,
@@ -12,8 +8,14 @@ import {
 import { Stack } from "@/Stack.ts";
 import { Stage } from "@/Stage.ts";
 import { PlatformServices } from "@/Util/PlatformServices.ts";
+import { describe, expect, it } from "alchemy-test";
+import * as ConfigProvider from "effect/ConfigProvider";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 
-const sessionEnv = {
+const sampleEnv: RpcServerEnvironment = {
+  profile: undefined,
+  envFile: undefined,
   alchemyContext: {
     dotAlchemy: "/tmp/.alchemy",
     dev: true,
@@ -25,13 +27,7 @@ const sessionEnv = {
   },
 };
 
-const sampleEnv: RpcServerEnvironment = {
-  profile: undefined,
-  envFile: undefined,
-  ...sessionEnv,
-};
-
-describe("Local.RpcServerEnvironment", { tags: ["unit", "local"] }, () => {
+describe("Local.RpcServerEnvironment", () => {
   it.effect("layer() provides Stack, Stage, and AlchemyContext", () =>
     Effect.gen(function* () {
       const observed = yield* Effect.gen(function* () {
@@ -40,12 +36,7 @@ describe("Local.RpcServerEnvironment", { tags: ["unit", "local"] }, () => {
         const ctx = yield* AlchemyContext;
         return { stack, stage, ctx };
       }).pipe(
-        Effect.provide(
-          Layer.provide(
-            layer({ profile: undefined, envFile: undefined, ...sessionEnv }),
-            PlatformServices,
-          ),
-        ),
+        Effect.provide(Layer.provide(layer(sampleEnv), PlatformServices)),
       );
 
       expect(observed.stack.name).toBe("my-stack");
@@ -66,10 +57,15 @@ describe("Local.RpcServerEnvironment", { tags: ["unit", "local"] }, () => {
         }),
       );
       const stack = yield* Stack.pipe(
-        Effect.provide(Layer.provide(fromEnv(), Layer.mergeAll(PlatformServices, environment))),
+        Effect.provide(
+          Layer.provide(
+            fromEnv(),
+            Layer.mergeAll(PlatformServices, environment),
+          ),
+        ),
       );
-      expect(stack.name).toBe(sessionEnv.stack.name);
-      expect(stack.stage).toBe(sessionEnv.stack.stage);
+      expect(stack.name).toBe(sampleEnv.stack.name);
+      expect(stack.stage).toBe(sampleEnv.stack.stage);
     }),
   );
 

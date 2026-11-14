@@ -3,17 +3,46 @@ title: HyperPod
 description: Provision SageMaker HyperPod clusters — Slurm or EKS orchestrated — and run ML workloads on them with sbatch, raw manifests, or effectful Jobs with task governance.
 ---
 
-SageMaker HyperPod is a standing fleet of accelerated instances for ML training and inference. It checks each node's health, including deep checks on its GPUs, replaces nodes that fail, and stays up between jobs. Where [ECS](/aws/compute/ecs) and [EKS](/aws/compute/eks) run application containers, HyperPod runs distributed training.
+**SageMaker HyperPod** is AWS's persistent fleet for ML training
+and inference: a cluster of accelerated instances with automatic
+health checks, faulty-node replacement, and deep health checks
+for GPUs. Where ECS and EKS run application containers, HyperPod
+runs distributed training — and stays up between jobs.
 
-## Clusters, instance groups and lifecycle scripts
+The HyperPod primitives:
 
-A **cluster** is the fleet. It's divided into **instance groups**, each a set of identical instances with one type, count, role and **lifecycle script**: the script every node runs when it boots, which installs the scheduler, mounts shared storage and wires up monitoring. A cluster usually has a controller group and one or more worker groups.
+- A **Cluster** is the fleet. It is orchestrated by **Slurm**
+  (the default) or by an **EKS** cluster you attach it to.
+- An **instance group** names a set of identical instances — a
+  controller group, a worker group — each with an instance type,
+  count, execution role, and lifecycle script.
+- A **lifecycle script** (`on_create.sh` in S3) runs on every
+  node when it boots. This is where real clusters install
+  schedulers, mount FSx, and wire observability.
+- **Task governance** (EKS orchestration only) arbitrates the
+  fleet between teams: a scheduler policy sets priority classes,
+  and per-team compute quotas reserve capacity.
 
-Something has to decide which job runs on which nodes. That's the **orchestrator**, and a cluster has one of two. **Slurm**, the default, is the classic HPC scheduler: you submit jobs with `sbatch` from a login node. **EKS** makes the nodes part of a Kubernetes cluster you attach, and you run Deployments and Jobs on them.
+Alchemy models these with
+[`Cluster`](/providers/aws/sagemaker/cluster),
+[`ClusterSchedulerConfig`](/providers/aws/sagemaker/clusterschedulerconfig),
+and [`ComputeQuota`](/providers/aws/sagemaker/computequota), and
+EKS workloads opt onto HyperPod nodes with the `hyperpod` prop on
+[`Deployment`](/providers/aws/eks/deployment) and
+[`Job`](/providers/aws/eks/job).
 
-Choose Slurm for HPC-style training queues. Choose EKS when your platform is already Kubernetes, or to share the fleet between teams with **task governance**: a scheduler policy of priority classes, and compute quotas that reserve capacity per team.
+## Choose an orchestrator
 
-In Alchemy, the fleet is [`SageMaker.Cluster`](/providers/aws/sagemaker/cluster). Governance is [`ClusterSchedulerConfig`](/providers/aws/sagemaker/clusterschedulerconfig) and [`ComputeQuota`](/providers/aws/sagemaker/computequota). On EKS, plain [`Kubernetes.Deployment`](/providers/kubernetes/deployment) and [`Kubernetes.Job`](/providers/kubernetes/job) workloads run on HyperPod nodes by naming the group's `nodeSelector`, and the quota's `namespace` and `queueName`.
+|                 | Slurm (default)                       | EKS (`orchestrator: { Eks }`)                        |
+| --------------- | ------------------------------------- | ---------------------------------------------------- |
+| Workloads       | `sbatch` on the login node (over SSM) | Kubernetes objects — `Deployment`, `Job`, `Manifest` |
+| High-level DX   | —                                     | `AWS.EKS.Job` / `Deployment` with `hyperpod:` props  |
+| Governance      | Slurm accounting                      | `ClusterSchedulerConfig` + `ComputeQuota` (Kueue)    |
+| Extra plumbing  | Lifecycle bucket + script             | EKS cluster + the HyperPod dependencies Helm chart   |
+
+Pick Slurm for classic HPC-style training queues. Pick EKS when
+your platform is Kubernetes or you want typed workloads and task
+governance.
 
 ## Create a Slurm cluster
 
@@ -103,7 +132,7 @@ enforces a few constraints, all encoded in the example:
   must be installed on the EKS cluster before the HyperPod
   cluster attaches — SageMaker validates it. The example fetches
   the chart with an `Action` and applies it with
-  [`Kubernetes.HelmChart`](/providers/kubernetes/helmchart).
+  [`HelmChart`](/providers/aws/eks/helmchart).
 
 ```typescript
 const eks = yield* AWS.EKS.Cluster("Orchestrator", {
@@ -143,25 +172,21 @@ HyperPod nodes must live in **private subnets** — the
 ## Run workloads on HyperPod nodes
 
 HyperPod nodes are ordinary EKS nodes carrying well-known labels.
-[`Kubernetes.Deployment`](/providers/kubernetes/deployment) and
-[`Kubernetes.Job`](/providers/kubernetes/job) opt onto them with
-each instance group's `nodeSelector` attribute — health-checked
-nodes of that group. The instance-group keys carry through to the
-cluster's attributes as types, so the reference is typed per key
-(a typo'd group name is a compile error) and the workload is
-connected to the fleet through the resource graph:
+[`Deployment`](/providers/aws/eks/deployment) and
+[`Job`](/providers/aws/eks/job) opt onto them with the `hyperpod`
+prop. The instance-group keys carry through to the cluster's
+attributes as types, so the reference is typed per key (a typo'd
+group name is a compile error), the workload is connected to the
+fleet through the resource graph, and the node selector derives
+from it:
 
 ```typescript
-const train = yield* Kubernetes.Job(
+const train = yield* AWS.EKS.Job(
   "Train",
   {
     cluster: eks,
     main: import.meta.url,
-    podTemplate: {
-      spec: {
-        nodeSelector: hyperpod.instanceGroups.workers.nodeSelector,
-      },
-    },
+    hyperpod: { instanceGroup: hyperpod.instanceGroups.workers },
   },
   Effect.gen(function* () {
     return {
@@ -175,8 +200,8 @@ const train = yield* Kubernetes.Job(
 
 For anything the typed surface doesn't cover — a Kubeflow
 `PyTorchJob`, a custom operator — apply a raw
-[`Kubernetes.Manifest`](/providers/kubernetes/manifest) pinned by
-the node labels directly:
+[`Manifest`](/providers/aws/eks/manifest) pinned by the node
+labels directly:
 
 ```typescript
 nodeSelector: {
@@ -221,15 +246,15 @@ const quota = yield* AWS.SageMaker.ComputeQuota("ResearchQuota", {
 });
 ```
 
-A workload submits through governance by referencing the quota's
-attributes — the governed namespace and the team's Kueue queue —
-which also orders the workload after the quota:
+A workload submits through governance by passing the quota
+resource — the namespace, Kueue queue label, and quota → workload
+ordering all derive from it:
 
 ```typescript
-namespace: quota.namespace, // hyperpod-ns-research
-labels: {
-  [AWS.SageMaker.KUEUE_QUEUE_NAME_LABEL]: quota.queueName,
-  [AWS.SageMaker.KUEUE_PRIORITY_CLASS_LABEL]: "training-priority",
+hyperpod: {
+  instanceGroup: hyperpod.instanceGroups.workers,
+  quota,                     // → hyperpod-ns-research + queue label
+  priorityClass: "training", // → training-priority
 },
 ```
 

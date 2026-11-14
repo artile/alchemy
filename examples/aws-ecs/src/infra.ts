@@ -1,4 +1,4 @@
-import * as AWS from "@alchemy.run/aws";
+import * as AWS from "alchemy/AWS";
 import * as Effect from "effect/Effect";
 
 /**

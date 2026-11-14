@@ -4,11 +4,10 @@ description: Run your customers' Workers in your own account — create a dispat
 sidebar:
   order: 26
 ---
-import Fanout from "../../../../components/diagrams/Fanout.astro";
 
 Workers for Platforms lets you run your customers' code on Cloudflare's
 edge inside your own account. Customer ("user") Workers live in a
-**dispatch namespace** and get no routes or URLs of their own.
+**dispatch namespace** — they get no routes or URLs of their own.
 Instead, a **platform Worker** you control receives every request and
 forwards it to the right user Worker by script name.
 
@@ -24,7 +23,7 @@ platform Worker can reference the same resource:
 
 ```typescript
 // src/namespace.ts
-import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Cloudflare from "alchemy/Cloudflare";
 
 export const Customers = Cloudflare.WorkersForPlatforms.DispatchNamespace(
   "Customers",
@@ -32,7 +31,7 @@ export const Customers = Cloudflare.WorkersForPlatforms.DispatchNamespace(
 );
 ```
 
-The `name` is the namespace's identity. There is no rename API, so
+The `name` is the namespace's identity — there is no rename API, so
 changing it triggers a replacement (omit it to get a generated name).
 Deleting a namespace also deletes every script uploaded into it.
 
@@ -44,7 +43,7 @@ a user Worker instead of as a routable account-level script:
 ```typescript
 // alchemy.run.ts
 import * as Alchemy from "alchemy";
-import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
 import { Customers } from "./src/namespace.ts";
 import PlatformWorker from "./src/platform.ts";
@@ -73,8 +72,8 @@ export default Alchemy.Stack(
 Referencing the namespace's `name` output establishes the dependency
 edge, so the namespace is created before the user Worker is uploaded
 into it (and the script is deleted first on destroy). The `script`
-form takes raw ESM source, typically whatever code your customer
-uploaded. `main` with a local entrypoint works too.
+form takes raw ESM source — typically whatever code your customer
+uploaded — but `main` with a local entrypoint works too.
 
 ## Dispatch from the platform Worker
 
@@ -84,10 +83,10 @@ looks up a user Worker by script name and returns a `Fetcher`:
 
 ```typescript
 // src/platform.ts
-import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
-import { HttpServerRequest } from "effect/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import { Customers } from "./namespace.ts";
 
 export default class PlatformWorker extends Cloudflare.Worker<PlatformWorker>()(
@@ -118,16 +117,6 @@ export default class PlatformWorker extends Cloudflare.Worker<PlatformWorker>()(
 ) {}
 ```
 
-<Fanout
-  item={{ title: "request", lines: ["GET /dispatch/customer-a/hello"] }}
-  group="Platform · Worker"
-  routes={[
-    { label: "dispatch", condition: ['dispatch.get("customer-a")'], target: { label: "customer-a", type: "user Worker" } },
-    { label: "dispatch", condition: ['dispatch.get("customer-b")'], target: { label: "customer-b", type: "user Worker" }, match: false },
-  ]}
-  caption="User Workers in the Customers namespace have no URL. Every request reaches the platform Worker, which picks one by script name and forwards the rest of the path."
-/>
-
 Provide `GetBinding` as a layer so the client resolves the native
 `dispatch_namespace` runtime binding. A request to
 `/dispatch/customer-a/hello` is forwarded to the `customer-a` user
@@ -138,7 +127,7 @@ edge, never a user-Worker response.
 ## Or bind on `env`
 
 For a plain async handler, pass the namespace on the Worker's `env`
-instead. `InferEnv` types it as the native runtime binding:
+instead — `InferEnv` types it as the native runtime binding:
 
 ```typescript
 const platform = Cloudflare.Worker("Platform", {
@@ -157,7 +146,7 @@ export default {
 ```
 
 `env.DISPATCH.get(name)` returns the same `Fetcher` the Effect-native
-client wraps. Pick whichever style matches the rest of the Worker.
+client wraps — pick whichever style matches the rest of the Worker.
 
 ## Where next
 

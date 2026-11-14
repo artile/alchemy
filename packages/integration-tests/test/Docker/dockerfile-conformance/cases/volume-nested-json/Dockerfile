@@ -1,2 +1,0 @@
-FROM alpine
-VOLUME [["/a"]]

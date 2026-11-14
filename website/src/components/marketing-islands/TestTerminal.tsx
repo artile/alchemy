@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useRef, useState } from "react";
-import { Line, prefersReducedMotion, sleep, TermChrome, useSpinner } from "./_terminal";
+import { Line, sleep, TermChrome, useSpinner } from "./_terminal";
 
 const TEST_STAGE = "pr-1729";
 
@@ -55,7 +55,11 @@ const TEST_STEPS: Step[] = [
   },
 ];
 
-export default function TestTerminal({ title = `CI · ${TEST_STAGE}` }: { title?: string }) {
+export default function TestTerminal({
+  title = `CI · ${TEST_STAGE}`,
+}: {
+  title?: string;
+}) {
   const [cmd, setCmd] = useState("");
   const [caret, setCaret] = useState(false);
   const [steps, setSteps] = useState<RunningStep[]>([]);
@@ -86,7 +90,7 @@ export default function TestTerminal({ title = `CI · ${TEST_STAGE}` }: { title?
       while (!aborted()) {
         setSteps([]);
         setSummary(null);
-        await typeCmd("pnpm test");
+        await typeCmd("bun test");
         if (aborted()) return;
         await sleep(280);
 
@@ -96,21 +100,19 @@ export default function TestTerminal({ title = `CI · ${TEST_STAGE}` }: { title?
           setSteps((arr) => [...arr, { ...s, status: "running" }]);
           await sleep(s.runMs);
           if (aborted()) return;
-          setSteps((arr) => arr.map((r) => (r.id === s.id ? { ...r, status: "done" } : r)));
+          setSteps((arr) =>
+            arr.map((r) => (r.id === s.id ? { ...r, status: "done" } : r)),
+          );
           await sleep(160);
         }
         if (aborted()) return;
-        // Reduced motion skips the waits, so report the scripted total.
-        const ms = prefersReducedMotion()
-          ? TEST_STEPS.reduce((sum, step) => sum + step.runMs + 160, 0)
-          : Date.now() - t0;
-        const elapsed = (ms / 1000).toFixed(1);
+        const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
         setSummary({ tests: 2, secs: elapsed });
         await sleep(2800);
       }
     };
 
-    void run();
+    run();
     return () => {
       cancelRef.current = true;
     };
@@ -138,13 +140,17 @@ export default function TestTerminal({ title = `CI · ${TEST_STAGE}` }: { title?
             >
               {icon}
             </span>
-            <span style={{ color: "var(--alc-fg-invert)", fontWeight: 600 }}>{s.label}</span>
+            <span style={{ color: "var(--alc-fg-invert)", fontWeight: 600 }}>
+              {s.label}
+            </span>
             {!isRunning ? (
               <span style={{ color: "var(--alc-code-comment)" }}>
                 {` (${s.detail} · ${s.durSec}s)`}
               </span>
             ) : (
-              <span style={{ color: "var(--alc-code-comment)" }}>{` (${s.detail})`}</span>
+              <span
+                style={{ color: "var(--alc-code-comment)" }}
+              >{` (${s.detail})`}</span>
             )}
           </Line>
           {s.url && !isRunning && (
@@ -159,10 +165,16 @@ export default function TestTerminal({ title = `CI · ${TEST_STAGE}` }: { title?
     }
     return (
       <Line key={s.id}>
-        <span style={{ color: iconColor, width: "1.2em", display: "inline-block" }}>{icon}</span>
+        <span
+          style={{ color: iconColor, width: "1.2em", display: "inline-block" }}
+        >
+          {icon}
+        </span>
         <span style={{ color: "var(--alc-fg-invert)" }}>{s.label}</span>
         {!isRunning && (
-          <span style={{ color: "var(--alc-code-comment)" }}>{` (${s.durMs}ms)`}</span>
+          <span
+            style={{ color: "var(--alc-code-comment)" }}
+          >{` (${s.durMs}ms)`}</span>
         )}
       </Line>
     );
@@ -197,7 +209,9 @@ export default function TestTerminal({ title = `CI · ${TEST_STAGE}` }: { title?
               {" PASS "}
             </span>
             <span>{summary.tests} tests · </span>
-            <span style={{ color: "var(--alc-fg-invert)", fontWeight: 600 }}>{summary.secs}s</span>
+            <span style={{ color: "var(--alc-fg-invert)", fontWeight: 600 }}>
+              {summary.secs}s
+            </span>
           </Line>
         </>
       )}

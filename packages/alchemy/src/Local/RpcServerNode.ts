@@ -1,48 +1,26 @@
 import * as Effect from "effect/Effect";
 import { WebSocketServer, type Server } from "ws";
 import * as RpcServer from "./RpcServer.ts";
-import { SESSION_ENV_PARAM } from "./RpcServerEnvironment.ts";
-import { matchRpcToken, requestPathname } from "./RpcToken.ts";
 
 export const RpcServerNode = RpcServer.layerServer(
-  Effect.fn(function* ({ parentConnected, parentDisconnected, createRpcSession, token }) {
-    const route = (url: string | undefined) => {
-      const rest = matchRpcToken(requestPathname(url), token);
-      return rest === "/parent" ? "parent" : rest === "" ? "session" : undefined;
-    };
-    const server = new WebSocketServer({
-      host: "127.0.0.1",
-      port: 0,
-      // Refuse the upgrade (401) unless the URL carries the token.
-      verifyClient: (info: { req: { url?: string } }) => route(info.req.url) !== undefined,
-    });
+  Effect.fn(function* ({
+    parentConnected,
+    parentDisconnected,
+    createRpcSession,
+  }) {
+    const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
     const url = yield* Effect.callback<string>((resume) => {
       server.on("connection", (ws, req) => {
-        const kind = route(req.url);
-        if (kind === undefined) {
-          ws.close(1008, "unauthorized");
-          return;
-        }
-        if (kind === "parent") {
+        if (req.url?.startsWith("/parent")) {
           parentConnected();
           ws.on("close", () => {
             parentDisconnected();
           });
           return;
         }
-        const sessionEnv =
-          new URL(req.url ?? "/", "http://localhost").searchParams.get(SESSION_ENV_PARAM) ??
-          undefined;
-        const session = createRpcSession(ws, sessionEnv);
+        const session = createRpcSession(ws);
         ws.on("message", (data) => {
-          session.dispatch.message(
-            (Array.isArray(data)
-              ? Buffer.concat(data)
-              : Buffer.isBuffer(data)
-                ? data
-                : Buffer.from(data)
-            ).toString(),
-          );
+          session.dispatch.message(data.toString());
         });
         ws.on("close", (code, reason) => {
           session.dispatch.close(code, reason.toString());

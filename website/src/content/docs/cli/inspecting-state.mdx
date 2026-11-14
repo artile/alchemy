@@ -4,11 +4,12 @@ description: See what alchemy thinks is deployed, debug a bad diff, and recover 
 ---
 
 import Terminal from "../../../components/Terminal.astro";
-import PackageManagers from "../../../components/PackageManagers.astro";
 
 ## What does alchemy think is deployed?
 
-<PackageManagers run="alchemy state" />
+```sh
+bun alchemy state tree
+```
 
 <Terminal content={`AlchemyEffectWebsite
 ├─ dev_sam
@@ -18,50 +19,49 @@ import PackageManagers from "../../../components/PackageManagers.astro";
    ├─ Bucket
    └─ Worker`} />
 
-In an interactive terminal, bare `alchemy state` opens the state
-explorer. It is a browsable tree of stacks, stages, and resources with a YAML
-preview of the selected state. This is the record used by the next plan, not
-the live cloud. See [State Store](/state-store). Full flag reference:
+This is the record the next plan diffs against — not the live cloud
+(see [State Store](/state-store)). Full flag reference:
 [state](/cli/state).
 
-For scripts, drill down one level at a time with `state list`:
+Drill down one level at a time:
 
-<PackageManagers run="alchemy state list" />
+```sh
+bun alchemy state stacks
+```
 
 Lists every stack in the store.
 
-<PackageManagers run="alchemy state list myapp" />
+```sh
+bun alchemy state stages --stack myapp
+```
 
 Lists every stage recorded under `myapp`.
 
-<PackageManagers run="alchemy state list myapp/dev_sam" />
+```sh
+bun alchemy state resources --stack myapp --stage dev_sam
+```
 
-Prints the state entries tracked under that stack and stage. Pass these paths to
-`state read`.
-
-Or skip the drilling entirely and read the whole estate at once:
-
-<PackageManagers run={'alchemy state read -r | jq \'to_entries[] | select(.value.resourceType == "AWS.EC2.Instance")\''} />
-
-One call returns every record across all stacks and stages as a
-single JSON document to filter locally — see
-[state read](/cli/state#state-read).
+Prints the FQNs tracked under that stack/stage — the addresses
+`state get` takes.
 
 ## Debugging a bad diff
 
-<PackageManagers run="alchemy state read myapp/dev_sam/Bucket" />
+```sh
+bun alchemy state get --stack myapp --stage dev_sam --fqn Bucket
+```
 
 This is the persisted props/attrs the planner diffs against — see
 [state](/cli/state) for the output encoding. Compare it with what
 `alchemy plan` says it wants to change. Three usual causes:
 
-**Wrong stage.** `--stage` defaults to `live_$USER` (e.g. `live_sam`),
+**Wrong stage.** `--stage` defaults to `dev_$USER` (e.g. `dev_sam`),
 so a plan that "wants to create everything" often just means you're
 looking at a stage you never deployed. Run
-`state list myapp` and confirm which stage actually has state.
+`state stages --stack myapp` and confirm which stage actually has
+state.
 
 **Drift.** The cloud changed out-of-band — someone edited the
-resource in a console or another tool. `state read` shows what alchemy
+resource in a console or another tool. `state get` shows what alchemy
 last persisted; the reconciler converges observed cloud state to the
 desired state on the next deploy (see
 [Resource Lifecycle](/infrastructure-as-code/resource-lifecycle)).
@@ -69,40 +69,48 @@ desired state on the next deploy (see
 **Stale state from a partially-failed deploy.** If a deploy crashed
 after mutating the cloud but before persisting, the record lags
 reality. Check the persisted attributes against what actually exists
-before reaching for `state delete`.
+before reaching for `clear`.
 
 ## Recover from bad state
 
-When the record is beyond repair, delete it and redeploy.
-`state delete` only deletes Alchemy's local record. It does not delete cloud
-resources:
+When the record is beyond repair, clear it and redeploy. `clear` is
+destructive but **local-only** — it deletes alchemy's record, never
+the cloud resources themselves:
 
-<PackageManagers script={`# one stage
-{run} alchemy state delete myapp/pr-42
+```sh
+# one stage
+bun alchemy state clear --stack myapp --stage pr-42 --yes
 
 # a whole stack
-{run} alchemy state delete myapp`} />
+bun alchemy state clear --stack myapp --yes
+```
 
 Then deploy — resources alchemy owns are re-imported automatically:
 
-<PackageManagers run="alchemy deploy" />
+```sh
+bun alchemy deploy
+```
 
 If the deploy fails with `OwnedBySomeoneElse`, escalate:
 
-<PackageManagers run="alchemy deploy --adopt" />
+```sh
+bun alchemy deploy --adopt
+```
 
 See [Adopting Resources](/cli/adopting-resources) for why the flag is
 usually unnecessary.
 
 ## Orphaned local state
 
-Pass `--backend local` to any `state` subcommand to read the on-disk
+Pass `--local` to any `state` subcommand to read the on-disk
 `.alchemy/state` directory instead of the stack's configured store.
 The canonical use: a Cloudflare state-store bootstrap was interrupted
 and left resources recorded only locally.
 
-<PackageManagers script={`# wipe local state after a botched bootstrap
-{run} alchemy state delete myapp --backend local`} />
+```sh
+# wipe local state after a botched bootstrap
+bun alchemy state clear --local
+```
 
 See [cloudflare](/cli/cloudflare) for bootstrap repair.
 

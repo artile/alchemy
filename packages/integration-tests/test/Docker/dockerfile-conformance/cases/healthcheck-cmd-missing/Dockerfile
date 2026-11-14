@@ -1,2 +1,0 @@
-FROM alpine
-HEALTHCHECK CMD

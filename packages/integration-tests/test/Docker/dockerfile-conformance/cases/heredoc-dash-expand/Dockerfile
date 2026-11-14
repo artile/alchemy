@@ -1,5 +1,0 @@
-FROM alpine
-ENV NAME=me
-RUN <<-EXPAND
-	expand $NAME
-EXPAND
