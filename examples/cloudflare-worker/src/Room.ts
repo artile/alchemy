@@ -1,4 +1,4 @@
-import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
 
 /**
@@ -52,7 +52,10 @@ export default class Room extends Cloudflare.DurableObject<Room>()(
         ) {
           const attachment = socket.deserializeAttachment<{ id: string }>();
           if (!attachment) return;
-          const text = typeof message === "string" ? message : new TextDecoder().decode(message);
+          const text =
+            typeof message === "string"
+              ? message
+              : new TextDecoder().decode(message);
 
           const remindMatch = text.match(/^\/remind\s+(\d+)\s+(.+)$/);
           if (remindMatch) {
@@ -63,7 +66,9 @@ export default class Room extends Cloudflare.DurableObject<Room>()(
             yield* Cloudflare.Workers.scheduleEvent(id, runAt, {
               message: msg,
             });
-            yield* socket.send(`[system] Reminder scheduled in ${delaySec}s: "${msg}"`);
+            yield* socket.send(
+              `[system] Reminder scheduled in ${delaySec}s: "${msg}"`,
+            );
             return;
           }
 

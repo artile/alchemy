@@ -1,3 +1,0 @@
-FROM alpine
-USER <<INVALID
-INVALID

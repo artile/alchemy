@@ -1,14 +1,16 @@
 import * as Effect from "effect/Effect";
-import type { ChildProcess } from "effect/process";
 import * as Stream from "effect/Stream";
+import type { ChildProcess } from "effect/unstable/process";
 
-export const exec = Effect.fn("exec")(function* (command: ChildProcess.Command) {
+export const exec = Effect.fn("exec")(function* (
+  command: ChildProcess.Command,
+) {
   const handle = yield* command;
   const [exitCode, stdout, stderr] = yield* Effect.all(
     [
       handle.exitCode,
-      handle.stdout.pipe(Stream.decodeText, Stream.mkString),
-      handle.stderr.pipe(Stream.decodeText, Stream.mkString),
+      Stream.mkString(Stream.decodeText(handle.stdout)),
+      Stream.mkString(Stream.decodeText(handle.stderr)),
     ],
     { concurrency: 3 },
   );

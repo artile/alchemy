@@ -1,16 +1,14 @@
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Effectable from "effect/Effectable";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import type { Pipeable } from "effect/Pipeable";
-import type * as Redacted from "effect/Redacted";
 import { AdoptPolicy } from "./AdoptPolicy.ts";
 import { toFqn } from "./FQN.ts";
-import type { Input, InputProps, PropsInput } from "./Input.ts";
+import type { Input, InputProps } from "./Input.ts";
 import { CurrentNamespace, type NamespaceNode } from "./Namespace.ts";
 import * as Output from "./Output.ts";
-import { findProviderByType, Provider } from "./Provider.ts";
+import { Provider } from "./Provider.ts";
 import {
   ConflictingProviderModeError,
   ProviderModePolicy,
@@ -18,9 +16,8 @@ import {
 } from "./ProviderMode.ts";
 import { ref as makeRef } from "./Ref.ts";
 import { RemovalPolicy } from "./RemovalPolicy.ts";
-import { RenamePolicy } from "./Rename.ts";
 import { Self } from "./Self.ts";
-import { StackContext } from "./StackContext.ts";
+import { Stack } from "./Stack.ts";
 
 export type ResourceConstructor<R extends ResourceLike, Req = never> = {
   Type: R["Type"];
@@ -30,11 +27,17 @@ export type ResourceConstructor<R extends ResourceLike, Req = never> = {
   ): ResourceClassWithMethods<R, Methods>;
   (
     id: string,
-    // PropsInput distributes over union Props so discriminated-union
-    // resources keep the correlation between discriminant and payload.
     ...args: {} extends R["Props"]
-      ? [props?: PropsInput<R["Props"]>]
-      : [props: PropsInput<R["Props"]>]
+      ? [
+          props?: {
+            [prop in keyof R["Props"]]: Input<R["Props"][prop]>;
+          },
+        ]
+      : [
+          props: {
+            [prop in keyof R["Props"]]: Input<R["Props"][prop]>;
+          },
+        ]
   ): Effect.Effect<R, never, Req>;
   <PropsReq = never>(
     id: string,
@@ -52,12 +55,8 @@ export interface ResourceClassLike<R extends ResourceLike> {
    * (see {@link ResourceOptions.aliases}). Copied onto the
    * `ProviderService` by `Provider.succeed`/`Provider.effect` so provider
    * lookup can resolve state persisted under a pre-rename type.
-   *
-   * `undefined` is accepted explicitly so `ResourceClass` (whose `Aliases`
-   * is `readonly string[] | undefined`) stays assignable to
-   * `ResourceClassLike` under `exactOptionalPropertyTypes`.
    */
-  Aliases?: readonly string[] | undefined;
+  Aliases?: readonly string[];
 }
 
 export type ResourceClass<R extends ResourceLike> = ResourceConstructor<
@@ -68,37 +67,28 @@ export type ResourceClass<R extends ResourceLike> = ResourceConstructor<
     Self: Self<R>;
     Provider: Provider<R>;
     Aliases: readonly string[] | undefined;
-    ref(id: string, options?: { stage?: string; stack?: string }): Effect.Effect<R>;
-  } & LookupMethod<R>;
+    ref(
+      id: string,
+      options?: { stage?: string; stack?: string },
+    ): Effect.Effect<R>;
+  };
 
 export type ResourceClassWithMethods<
   R extends ResourceLike,
   Methods extends { [key: string]: any },
-> = ResourceConstructor<R, R["Providers"] extends undefined ? Provider<R> : R["Providers"]> &
+> = ResourceConstructor<
+  R,
+  R["Providers"] extends undefined ? Provider<R> : R["Providers"]
+> &
   Effect.Effect<ResourceConstructor<R>> & {
     Self: Self<R>;
     Provider: Provider<R>;
     Aliases: readonly string[] | undefined;
-    ref(id: string, options?: { stage?: string; stack?: string }): Effect.Effect<R>;
-  } & LookupMethod<R> &
-  Methods;
-
-/**
- * `lookup` exists only on resources that declare a `Lookup` type, so calling
- * it on any other resource is a type error.
- */
-export type LookupMethod<R extends ResourceLike> = [R["Lookup"]] extends [never]
-  ? {}
-  : {
-      /**
-       * Reference a resource this stack does not manage, found by the key
-       * its type declares as `Lookup` (e.g. `Worker.lookup({ name })`).
-       * Resolves through the provider's `lookup` during plan/deploy; nothing
-       * is created, adopted or written to state. Props may be Outputs of
-       * other resources: the lookup waits for them, and depends on them.
-       */
-      lookup(props: PropsInput<R["Lookup"]>): R;
-    };
+    ref(
+      id: string,
+      options?: { stage?: string; stack?: string },
+    ): Effect.Effect<R>;
+  } & Methods;
 
 export type LogicalId = string;
 
@@ -113,7 +103,6 @@ export interface ResourceLike<
   Attributes extends object = object,
   Binding = any,
   Providers = any,
-  Lookup = any,
 > {
   /**
    * Namespace containing this Resource.
@@ -153,46 +142,29 @@ export interface ResourceLike<
    * during dev); `undefined` means the run default (`AlchemyContext.dev`).
    */
   Mode: ProviderMode | undefined;
-  /**
-   * Copied from {@link ResourceOptions.requiresImplementation} at
-   * registration: `true` for platform-typed resources, whose registrations
-   * must have resolved {@link Props} by plan time. `Plan.make` fails fast
-   * with {@link MissingImplementationError} when this is set and `Props`
-   * are still `undefined` after the whole program has evaluated — a bare
-   * tag was yielded but its `.make(props, impl)` Layer was never provided.
-   */
-  RequiresImplementation: boolean | undefined;
-  /**
-   * Former FQNs this resource's state may still be persisted under,
-   * captured from the ambient {@link RenamePolicy} at registration (via
-   * `.pipe(renamedFrom("OldId"))`) and resolved against the same namespace
-   * as the resource's own FQN. The planner migrates a state row found at a
-   * former FQN to {@link FQN} instead of planning a create+delete
-   * replacement — see `renamedFrom` in Rename.ts for the full semantics.
-   */
-  FormerFqns: readonly string[] | undefined;
   /** @internal phantom */
   Attributes: Attributes;
   /** @internal phantom */
   Binding: Binding;
   /** @internal phantom */
   Providers: Providers;
-  /**
-   * @internal phantom — the props {@link ResourceClass.lookup} takes to find
-   * an unmanaged instance. `never` for resources that can't be looked up.
-   */
-  Lookup: Lookup;
 }
 
-// Require the full resource identity (Type AND FQN), not just `Type`:
-// user-authored prop objects legitimately carry a `Type` field (e.g.
-// Amazon States Language states like `{ Type: "Pass", End: true }` in a
-// Step Functions definition) and must not be mistaken for resources.
-// Locally-declared resources always expose both as own keys; refs
-// (`Resource.ref(...)`) deliberately report neither via `in` so they keep
-// routing through Output resolution.
-export const isResource = (value: any): value is ResourceLike =>
-  typeof value === "object" && value !== null && "Type" in value && "FQN" in value;
+export const isResource = (value: any): value is ResourceLike => {
+  // Require the full resource identity (Type AND FQN), not just `Type`:
+  // user-authored prop objects legitimately carry a `Type` field (e.g.
+  // Amazon States Language states like `{ Type: "Pass", End: true }` in a
+  // Step Functions definition) and must not be mistaken for resources.
+  // Locally-declared resources always expose both as own keys; refs
+  // (`Resource.ref(...)`) deliberately report neither via `in` so they keep
+  // routing through Output resolution.
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "Type" in value &&
+    "FQN" in value
+  );
+};
 
 /**
  * Does `value` reference an instance of the resource type `type` —
@@ -222,9 +194,8 @@ export type Resource<
   Attributes extends object = any,
   Binding = never,
   Providers = undefined,
-  Lookup = never,
 > = Pipeable &
-  ResourceLike<Type, Props, Attributes, Binding, Providers, Lookup> & {
+  ResourceLike<Type, Props, Attributes, Binding, Providers> & {
     bind(sid: Input<string>, binding: Input<Binding>): Effect.Effect<void>;
     bind(
       template: TemplateStringsArray,
@@ -237,15 +208,14 @@ export type Resource<
 /**
  * Accessor type for one attribute. Pure object attributes upgrade to
  * {@link Output.ObjectExpr} so nested access is typed —
- * `hyperpod.instanceGroups.workers` — while primitives, `Redacted` values
- * (a leaf at runtime), unions with `undefined`, branded string unions
- * (`"a" | (string & {})`), and arrays
+ * `hyperpod.instanceGroups.workers` — while primitives, unions with
+ * `undefined`, branded string unions (`"a" | (string & {})`), and arrays
  * stay plain {@link Output.Output} (running them through `ToOutput` would
  * classify the `string & {}` branch as an object and explode into
  * String-method mapped types).
  */
 type AttrOutput<A> = [A] extends [
-  string | number | boolean | bigint | null | undefined | Date | Redacted.Redacted<any> | any[],
+  string | number | boolean | bigint | null | undefined | Date | any[],
 ]
   ? Output.Output<A, never>
   : [A] extends [Record<string, any>]
@@ -281,168 +251,7 @@ export interface ResourceOptions {
    * ```
    */
   aliases?: string[];
-  /**
-   * Marks every registration of this type as requiring resolved props by
-   * plan time. Set by `Platform(...)` on its resource class: every
-   * legitimate platform construction (a `.make(props, impl)` Layer build,
-   * a tag declared with props, a plain `Worker("id", props)` call) produces
-   * defined `Props` — the only way a platform-typed registration reaches
-   * the planner with `Props === undefined` is a bare-tag FORWARD REFERENCE
-   * whose `.make` Layer never built. `Plan.make` fails fast with
-   * {@link MissingImplementationError} in that case, instead of letting a
-   * provider read `undefined` props. Plain (non-platform) resources leave
-   * this unset so a no-props reference yield (`yield* Queue("MyQueue")`)
-   * keeps planning as a noop.
-   */
-  requiresImplementation?: boolean;
 }
-
-/**
- * A tagged platform resource declared with neither props nor an inline
- * implementation was `yield*`ed, but its `.make(props, impl)` Layer never
- * built.
- *
- * Such a tag carries no configuration on its own — props AND impl both live
- * on the Layer — so its registration is a forward reference with `undefined`
- * props that the Layer's build repairs (in either order; see the #874
- * circular env-tag pattern). Props still `undefined` once the whole program
- * has evaluated means the Layer was never provided; `Plan.make` fails fast
- * with this error instead of letting the failure surface deep inside
- * whichever provider first reads a prop (e.g. `TypeError: undefined is not
- * an object (evaluating 'news.name')` in the Cloudflare Worker pre-create).
- */
-export class MissingImplementationError extends Data.TaggedError("MissingImplementationError")<{
-  message: string;
-  /** Resource type of the platform, e.g. `Cloudflare.Worker`. */
-  type: string;
-  /** Logical id of the tagged resource (its class name by convention). */
-  id: string;
-}> {}
-
-/**
- * A logical id was declared again as a different resource type.
- *
- * A logical id names one resource in the stack. Yielding that id again
- * returns the resource already registered, so one declaration can be shared
- * by the stack program and a service init. A different type is a different
- * resource. Returning the first one would drop the second declaration while
- * TypeScript still typed the result as the second type.
- */
-export class DuplicateLogicalIdError extends Data.TaggedError("DuplicateLogicalIdError")<{
-  message: string;
-  /** Fully qualified logical id already present on the stack. */
-  fqn: string;
-  /** Type registered under {@link fqn}. */
-  existingType: string;
-  /** Type of the declaration that collided with {@link fqn}. */
-  conflictingType: string;
-}> {}
-
-/**
- * `Resource.lookup(props)` found nothing: the provider's `lookup` returned
- * `undefined` for these props.
- */
-export class LookupNotFoundError extends Data.TaggedError("LookupNotFoundError")<{
-  message: string;
-  /** Resource type that was looked up, e.g. `Cloudflare.Worker`. */
-  type: string;
-  /** The props passed to `lookup`. */
-  props: unknown;
-}> {}
-
-/**
- * `Resource.lookup(props)` was called on a resource whose provider has no
- * `lookup` lifecycle method.
- */
-export class LookupNotSupportedError extends Data.TaggedError("LookupNotSupportedError")<{
-  message: string;
-  type: string;
-}> {}
-
-/**
- * `Resource.lookup(props)` found a resource this stack already manages. A
- * lookup carries no dependency, so the engine could delete or replace the
- * resource without updating its consumers; reference the declared resource
- * (or its `.ref`) instead.
- */
-export class LookupOfManagedResourceError extends Data.TaggedError("LookupOfManagedResourceError")<{
-  message: string;
-  type: string;
-  props: unknown;
-  /** The FQN of the resource in this stack the lookup found. */
-  fqn: string;
-}> {}
-
-/**
- * A logical id for a looked-up resource, used where a declared resource's
- * would be (bind templates, labels): its primitive lookup values joined.
- */
-const lookupLogicalId = (type: string, props: unknown): string => {
-  const values =
-    props && typeof props === "object"
-      ? Object.values(props).filter(
-          (value) => typeof value === "string" || typeof value === "number",
-        )
-      : [];
-  return values.length > 0 ? values.join("-") : type;
-};
-
-const lookup = <R extends ResourceLike>(type: string, props: PropsInput<R["Lookup"]>): R =>
-  new Output.LookupExpr(
-    type,
-    props,
-    lookupLogicalId(type, props),
-    Effect.fn(function* (resolved: R["Lookup"]) {
-      // The looked-up resource lives in the real cloud, so even an
-      // `alchemy dev` run asks the live provider.
-      const provider = yield* findProviderByType<R>(type, "live");
-      if (provider.lookup === undefined) {
-        return yield* Effect.die(
-          new LookupNotSupportedError({
-            message: `${type} does not support lookup`,
-            type,
-          }),
-        );
-      }
-      const attrs = yield* provider.lookup(resolved).pipe(Effect.orDie);
-      if (attrs === undefined) {
-        return yield* Effect.die(
-          new LookupNotFoundError({
-            message: `${type}.lookup(${JSON.stringify(resolved)}) found no resource`,
-            type,
-            props: resolved,
-          }),
-        );
-      }
-      return attrs;
-    }) as (props: R["Lookup"]) => Effect.Effect<R["Attributes"]>,
-  ) as unknown as R;
-
-export const missingImplementation = (type: string, id: string) =>
-  new MissingImplementationError({
-    type,
-    id,
-    message: [
-      `${type}<${id}> was yielded without its implementation.`,
-      "",
-      `\`${id}\` is declared as a bare tag — no props, no inline implementation — so both come from its \`.make(...)\` Layer:`,
-      "",
-      `  export class ${id} extends ${type}<${id}>()("${id}") {}`,
-      `  export const ${id}Live = ${id}.make({ /* props */ }, Effect.gen(function* () { /* ... */ }));`,
-      "",
-      `That Layer is not in scope where \`${id}\` is yielded. Provide it to the Stack's program:`,
-      "",
-      "  Alchemy.Stack(",
-      `    "my-stack",`,
-      "    { providers, state },",
-      "    Effect.gen(function* () {",
-      `      const instance = yield* ${id};`,
-      `    }).pipe(Effect.provide([${id}Live])),`,
-      "  )",
-      "",
-      `If \`${id}\` is not Effect-native, declare it with props instead: \`()("${id}", { /* props */ })\`.`,
-    ].join("\n"),
-  });
 
 /**
  * Creates a resource constructor for a concrete resource type.
@@ -459,9 +268,12 @@ export function Resource<R extends ResourceLike>(
   const defaultRemovalPolicy = options?.defaultRemovalPolicy ?? "destroy";
   type Props = Input<R["Props"]>;
   const self = Self<R>(type);
-  const constructor = (id: string, props: Props | Effect.Effect<Props> | undefined) =>
+  const constructor = (
+    id: string,
+    props: Props | Effect.Effect<Props> | undefined,
+  ) =>
     Effect.gen(function* () {
-      const stack = yield* StackContext;
+      const stack = yield* Stack;
       const namespace = yield* CurrentNamespace;
       const fqn = toFqn(namespace, id);
 
@@ -470,24 +282,12 @@ export function Resource<R extends ResourceLike>(
       // The Reference default is `undefined` — "no explicit decoration" —
       // which is distinct from an explicit `remote(false)`.
       const ambientPolicy = yield* ProviderModePolicy;
-      const ambientMode: ProviderMode | undefined = ambientPolicy ? "live" : undefined;
+      const ambientMode: ProviderMode | undefined = ambientPolicy
+        ? "live"
+        : undefined;
 
       const existing = stack.resources[fqn];
       if (existing) {
-        if (existing.Type !== type) {
-          return yield* Effect.die(
-            new DuplicateLogicalIdError({
-              message:
-                `Resource '${fqn}' is already registered as '${existing.Type}' ` +
-                `and cannot be declared as '${type}'. A logical id names one ` +
-                `resource in the stack. Yield the existing resource, or give ` +
-                `this declaration its own id.`,
-              fqn,
-              existingType: existing.Type,
-              conflictingType: type,
-            }),
-          );
-        }
         // A resource may be `yield*`ed from several places (idempotent
         // registration). If a later site carries an *explicit* ambient
         // ProviderModePolicy that disagrees with what the resource was
@@ -512,7 +312,7 @@ export function Resource<R extends ResourceLike>(
             }),
           );
         }
-        // TODO(sam): check if props are different and die
+        // // TODO(sam): check if props are different and die
         return existing;
       }
       const bind = (
@@ -544,7 +344,10 @@ export function Resource<R extends ResourceLike>(
                     .join(", ");
                 }
 
-                if (arg && (typeof arg === "object" || typeof arg === "function")) {
+                if (
+                  arg &&
+                  (typeof arg === "object" || typeof arg === "function")
+                ) {
                   if ("LogicalId" in arg && typeof arg.LogicalId === "string") {
                     return arg.LogicalId;
                   }
@@ -561,7 +364,9 @@ export function Resource<R extends ResourceLike>(
                 `${(args[0] as TemplateStringsArray)
                   .flatMap((text, i) => {
                     const stringified = stringifyBindArg(args[i + 1]);
-                    return stringified !== undefined ? [text, stringified] : [text];
+                    return stringified !== undefined
+                      ? [text, stringified]
+                      : [text];
                   })
                   .join("")}`,
                 data,
@@ -578,24 +383,10 @@ export function Resource<R extends ResourceLike>(
         RemovalPolicy: yield* Effect.serviceOption(RemovalPolicy).pipe(
           Effect.map(Option.getOrElse(() => defaultRemovalPolicy)),
         ),
-        Adopt: yield* Effect.serviceOption(AdoptPolicy).pipe(Effect.map(Option.getOrUndefined)),
-        Mode: ambientMode,
-        RequiresImplementation: options?.requiresImplementation || undefined,
-        // Bare-string former ids resolve against the SAME namespace as the
-        // resource's own id, so `renamedFrom("Site/Worker")` declared at the
-        // caller's level claims `<callerNs>/Site/Worker`; the `{ fqn }` form
-        // is absolute (cross-namespace moves).
-        FormerFqns: yield* Effect.serviceOption(RenamePolicy).pipe(
-          Effect.map(
-            Option.match({
-              onNone: () => undefined,
-              onSome: (formerIds) =>
-                formerIds.map((formerId) =>
-                  typeof formerId === "string" ? toFqn(namespace, formerId) : formerId.fqn,
-                ),
-            }),
-          ),
+        Adopt: yield* Effect.serviceOption(AdoptPolicy).pipe(
+          Effect.map(Option.getOrUndefined),
         ),
+        Mode: ambientMode,
         bind,
         toString(this: typeof target) {
           return `Resource<${this.Type}>(${this.LogicalId})`;
@@ -619,17 +410,13 @@ export function Resource<R extends ResourceLike>(
         ? // @effect-diagnostics-next-line anyUnknownInErrorContext:off
           yield* props.pipe(
             Effect.provide(
-              Layer.mergeAll(Layer.succeed(Self, Resource), Layer.succeed(Self(type), Resource)),
+              Layer.mergeAll(
+                Layer.succeed(Self, Resource),
+                Layer.succeed(Self(type), Resource),
+              ),
             ),
           )
-        : // A plain resource declared without props (every prop optional)
-          // reaches its provider as `{}`. Only a platform tag keeps
-          // `undefined`: it marks a forward reference whose `.make` Layer
-          // supplies the props (see `Plan.make`'s missing-implementation
-          // check).
-          props === undefined && !options?.requiresImplementation
-          ? ({} as Props)
-          : props;
+        : props;
       return Resource;
     });
 
@@ -644,10 +431,11 @@ export function Resource<R extends ResourceLike>(
      * (`ref.someAttr`) exactly the way it would for a locally-declared
      * resource.
      */
-    ref: (id: string, options?: { stage?: string; stack?: string }): Effect.Effect<R> =>
+    ref: (
+      id: string,
+      options?: { stage?: string; stack?: string },
+    ): Effect.Effect<R> =>
       Effect.succeed(Output.of(makeRef<R>(id, options, type)) as unknown as R),
-
-    lookup: (props: PropsInput<R["Lookup"]>): R => lookup<R>(type, props),
 
     Type: type,
     Provider: ProviderTag,
@@ -666,7 +454,10 @@ export function Resource<R extends ResourceLike>(
     // `Effect.isEffect(MyResource)` is now true so `Effect.all`/`forEach` work.
     Effectable.Prototype({
       label: `Resource<${type}>`,
-      evaluate: () => Effect.succeed((id: string, props: R["Props"]) => constructor(id, props)),
+      evaluate: () =>
+        Effect.succeed((id: string, props: R["Props"]) =>
+          constructor(id, props),
+        ),
     }),
   ) as any;
 

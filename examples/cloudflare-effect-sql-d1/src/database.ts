@@ -1,4 +1,4 @@
-import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Cloudflare from "alchemy/Cloudflare";
 
 /**
  * A D1 database with hand-written SQL migrations. Files under
@@ -6,5 +6,5 @@ import * as Cloudflare from "@alchemy.run/cloudflare";
  * every deploy; already-applied migrations are skipped.
  */
 export const Database = Cloudflare.D1.Database("Database", {
-  migrations: "./migrations",
+  migrationsDir: "./migrations",
 });

@@ -1,8 +1,12 @@
-import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Alchemy from "alchemy";
+import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
 
-export const Website = Cloudflare.Website.Vite("Website", {});
+export const Website = Cloudflare.Website.Vite("Website", {
+  compatibility: {
+    flags: ["nodejs_compat"],
+  },
+});
 
 export default Alchemy.Stack(
   "CloudflareTanstackStartSolidExample",

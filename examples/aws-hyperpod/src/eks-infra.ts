@@ -1,5 +1,4 @@
-import * as AWS from "@alchemy.run/aws";
-import * as Kubernetes from "@alchemy.run/kubernetes";
+import * as AWS from "alchemy/AWS";
 import * as Output from "alchemy/Output";
 import * as Effect from "effect/Effect";
 import { FetchHyperPodChart } from "./hyperpod-chart.ts";
@@ -77,7 +76,9 @@ export const HyperPodEksInfra = Effect.gen(function* () {
         },
       ],
     },
-    managedPolicyArns: ["arn:aws:iam::aws:policy/AmazonSageMakerClusterInstanceRolePolicy"],
+    managedPolicyArns: [
+      "arn:aws:iam::aws:policy/AmazonSageMakerClusterInstanceRolePolicy",
+    ],
     inlinePolicies: {
       "hyperpod-eks-nodes": {
         Version: "2012-10-17",
@@ -136,7 +137,7 @@ export const HyperPodEksInfra = Effect.gen(function* () {
   const chart = yield* FetchHyperPodChart({
     repo: "https://github.com/aws/sagemaker-hyperpod-cli.git",
   });
-  const dependencies = yield* Kubernetes.HelmChart("HyperPodDependencies", {
+  const dependencies = yield* AWS.EKS.HelmChart("HyperPodDependencies", {
     cluster: eks,
     chart: chart.chartPath,
     releaseName: "dependencies",
@@ -166,7 +167,12 @@ export const HyperPodEksInfra = Effect.gen(function* () {
     vpcConfig: {
       // The EKS-managed cluster security group already allows node ↔
       // control-plane and intra-cluster traffic.
-      SecurityGroupIds: [Output.map(eks.resourcesVpcConfig, (vpc) => vpc.clusterSecurityGroupId!)],
+      SecurityGroupIds: [
+        Output.map(
+          eks.resourcesVpcConfig,
+          (vpc) => vpc.clusterSecurityGroupId!,
+        ),
+      ],
       Subnets: network.privateSubnetIds,
     },
     instanceGroups: {
@@ -191,7 +197,10 @@ export const HyperPodEksInfra = Effect.gen(function* () {
   // add-on deploy AFTER the HyperPod nodes join — its controllers need a
   // schedulable node.
   const governance = yield* AWS.EKS.Addon("TaskGovernance", {
-    clusterName: Output.map(hyperpod.orchestratorEksClusterArn, (arn) => arn!.split("/").pop()!),
+    clusterName: Output.map(
+      hyperpod.orchestratorEksClusterArn,
+      (arn) => arn!.split("/").pop()!,
+    ),
     addonName: "amazon-sagemaker-hyperpod-taskgovernance",
   });
 

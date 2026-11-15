@@ -6,7 +6,8 @@ export const Route = createFileRoute("/api/health")({
     handlers: {
       GET: async () => {
         await checkDatabaseReady();
-        const configurationReady = process.env.TANSTACK_SHARED_FLAG === "project-level";
+        const configurationReady =
+          process.env.TANSTACK_SHARED_FLAG === "project-level";
         return Response.json(
           {
             ok: configurationReady,

@@ -14,17 +14,13 @@
     "dev": "alchemy dev",
     "destroy": "alchemy destroy",
     "logs": "alchemy logs",
-    "tail": "alchemy logs --tail",
+    "tail": "alchemy tail",
     "test": "bun test"
   },
   "dependencies": {
-    "@alchemy.run/cloudflare": "workspace:*",
     "@effect/platform-bun": "catalog:",
     "@effect/platform-node": "catalog:",
     "alchemy": "workspace:*",
     "effect": "catalog:"
-  },
-  "devDependencies": {
-    "@alchemy.run/test": "workspace:*"
   }
 }

@@ -39,7 +39,11 @@ interface LogLine {
 
 let _id = 0;
 
-export default function DevTerminal({ title = "~/my-app" }: { title?: string }) {
+export default function DevTerminal({
+  title = "~/my-app",
+}: {
+  title?: string;
+}) {
   const [lines, setLines] = useState<LogLine[]>([]);
   const [busy, setBusy] = useState(false);
   const cancelRef = useRef(false);
@@ -74,8 +78,14 @@ export default function DevTerminal({ title = "~/my-app" }: { title?: string }) 
             push(
               <>
                 <span style={{ color: "var(--alc-success)" }}>✓ </span>
-                <span style={{ color: "var(--alc-fg-invert)", fontWeight: 600 }}>{step.label}</span>
-                <span style={{ color: "var(--alc-code-comment)" }}>{` (${step.detail})`}</span>
+                <span
+                  style={{ color: "var(--alc-fg-invert)", fontWeight: 600 }}
+                >
+                  {step.label}
+                </span>
+                <span
+                  style={{ color: "var(--alc-code-comment)" }}
+                >{` (${step.detail})`}</span>
                 <span style={{ color: "var(--alc-success)" }}> created</span>
               </>,
             );
@@ -84,12 +94,16 @@ export default function DevTerminal({ title = "~/my-app" }: { title?: string }) 
             push(
               <>
                 <span style={{ color: "var(--alc-code-comment)" }}> → </span>
-                <span style={{ color: "var(--alc-accent-bright)" }}>http://localhost:1337</span>
+                <span style={{ color: "var(--alc-accent-bright)" }}>
+                  http://localhost:1337
+                </span>
               </>,
             );
             push(
               <>
-                <span style={{ color: "var(--alc-code-comment)" }}>Watching for changes…</span>
+                <span style={{ color: "var(--alc-code-comment)" }}>
+                  Watching for changes…
+                </span>
               </>,
             );
           } else if (step.kind === "edit") {
@@ -97,7 +111,9 @@ export default function DevTerminal({ title = "~/my-app" }: { title?: string }) 
             push(
               <>
                 <span style={{ color: "var(--alc-warn)" }}>↻ </span>
-                <span style={{ color: "var(--alc-code-comment)" }}>{step.label} changed</span>
+                <span style={{ color: "var(--alc-code-comment)" }}>
+                  {step.label} changed
+                </span>
               </>,
             );
           } else if (step.kind === "reload") {
@@ -107,9 +123,17 @@ export default function DevTerminal({ title = "~/my-app" }: { title?: string }) 
             push(
               <>
                 <span style={{ color: "var(--alc-success)" }}>✓ </span>
-                <span style={{ color: "var(--alc-fg-invert)", fontWeight: 600 }}>Api</span>
-                <span style={{ color: "var(--alc-code-comment)" }}>{` reloaded in `}</span>
-                <span style={{ color: "var(--alc-fg-invert)", fontWeight: 600 }}>
+                <span
+                  style={{ color: "var(--alc-fg-invert)", fontWeight: 600 }}
+                >
+                  Api
+                </span>
+                <span
+                  style={{ color: "var(--alc-code-comment)" }}
+                >{` reloaded in `}</span>
+                <span
+                  style={{ color: "var(--alc-fg-invert)", fontWeight: 600 }}
+                >
                   {step.detail}
                 </span>
               </>,
@@ -119,8 +143,14 @@ export default function DevTerminal({ title = "~/my-app" }: { title?: string }) 
             push(
               <>
                 <span style={{ color: "var(--alc-success)" }}>+ </span>
-                <span style={{ color: "var(--alc-fg-invert)", fontWeight: 600 }}>{step.label}</span>
-                <span style={{ color: "var(--alc-code-comment)" }}>{` (${step.detail})`}</span>
+                <span
+                  style={{ color: "var(--alc-fg-invert)", fontWeight: 600 }}
+                >
+                  {step.label}
+                </span>
+                <span
+                  style={{ color: "var(--alc-code-comment)" }}
+                >{` (${step.detail})`}</span>
                 <span style={{ color: "var(--alc-success)" }}> created</span>
               </>,
             );
@@ -130,7 +160,9 @@ export default function DevTerminal({ title = "~/my-app" }: { title?: string }) 
               <>
                 <span style={{ color: "var(--alc-warn)" }}>~ </span>
                 <span style={{ color: "var(--alc-code-comment)" }}>wired </span>
-                <span style={{ color: "var(--alc-code-type)" }}>{step.label}</span>
+                <span style={{ color: "var(--alc-code-type)" }}>
+                  {step.label}
+                </span>
               </>,
             );
           } else if (step.kind === "request") {
@@ -140,8 +172,12 @@ export default function DevTerminal({ title = "~/my-app" }: { title?: string }) 
                 <span
                   style={{ color: "var(--alc-code-comment)" }}
                 >{`[${new Date().toLocaleTimeString().slice(0, 8)}] `}</span>
-                <span style={{ color: "var(--alc-fg-invert)" }}>{step.label}</span>
-                <span style={{ color: "var(--alc-success)" }}>{`  ${step.detail}`}</span>
+                <span style={{ color: "var(--alc-fg-invert)" }}>
+                  {step.label}
+                </span>
+                <span
+                  style={{ color: "var(--alc-success)" }}
+                >{`  ${step.detail}`}</span>
               </>,
             );
           }
@@ -150,7 +186,7 @@ export default function DevTerminal({ title = "~/my-app" }: { title?: string }) 
       }
     };
 
-    void run();
+    run();
     return () => {
       cancelRef.current = true;
     };
@@ -159,7 +195,12 @@ export default function DevTerminal({ title = "~/my-app" }: { title?: string }) 
   const spinner = useSpinner(busy);
 
   return (
-    <TermChrome title={title} badge="DEV" badgeColor="var(--alc-accent-bright)" maxLines={15}>
+    <TermChrome
+      title={title}
+      badge="DEV"
+      badgeColor="var(--alc-accent-bright)"
+      maxLines={15}
+    >
       {lines.map((l) => (
         <Line key={l.key}>{l.text}</Line>
       ))}

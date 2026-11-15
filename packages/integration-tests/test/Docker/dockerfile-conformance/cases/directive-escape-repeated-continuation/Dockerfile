@@ -1,3 +1,0 @@
-# escape=\
-# escape=`
-FROM alpine

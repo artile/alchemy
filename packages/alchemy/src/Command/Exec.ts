@@ -43,8 +43,9 @@ export interface Exec extends Resource<
  * its inputs (or `command`/`cwd`/`env`) change; set `memo: false` to re-run on
  * every deploy.
  *
- * ### Running a Command
- * **Example:** Run a One-Off Command
+ * @resource
+ * @section Running a Command
+ * @example Run a One-Off Command
  * ```typescript
  * yield* Exec("codegen", {
  *   command: "npm run codegen",
@@ -52,8 +53,8 @@ export interface Exec extends Resource<
  * });
  * ```
  *
- * ### Running with Custom Environment
- * **Example:** Run Database Migrations
+ * @section Running with Custom Environment
+ * @example Run Database Migrations
  * ```typescript
  * yield* Exec("migrate", {
  *   command: "npm run db:migrate",
@@ -63,8 +64,8 @@ export interface Exec extends Resource<
  * });
  * ```
  *
- * ### Memoizing Re-Runs
- * **Example:** Only Re-Run When Inputs Change
+ * @section Memoizing Re-Runs
+ * @example Only Re-Run When Inputs Change
  * ```typescript
  * yield* Exec("codegen", {
  *   command: "npm run codegen",
@@ -72,16 +73,14 @@ export interface Exec extends Resource<
  * });
  * ```
  *
- * ### Bounding Command Runtime
- * **Example:** Time Out a Migration
+ * @section Bounding Command Runtime
+ * @example Time Out a Migration
  * ```typescript
  * yield* Exec("migrate", {
  *   command: "npm run db:migrate",
  *   timeout: "5 minutes",
  * });
  * ```
- *
- * @resource
  */
 export const Exec = Resource<Exec>("Command.Exec");
 
@@ -97,7 +96,8 @@ export const ExecProvider = () =>
           if (!output || !isResolved(news)) return undefined;
 
           // Always update if memoization is disabled or input hash is not available.
-          if (news.memo === false || !output.hash.input) return { action: "update" };
+          if (news.memo === false || !output.hash.input)
+            return { action: "update" };
 
           // Optimization: short-circuit if props have changed to avoid unnecessary file system operations.
           if (havePropsChanged(olds, news)) return { action: "update" };

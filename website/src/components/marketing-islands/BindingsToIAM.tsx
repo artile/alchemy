@@ -1,14 +1,21 @@
-import { Icon } from "@iconify/react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Icon } from "@iconify/react";
 
 const tok =
   (color: string) =>
-  ({ children }: { children: ReactNode }) => <span style={{ color }}>{children}</span>;
+  ({ children }: { children: ReactNode }) => (
+    <span style={{ color }}>{children}</span>
+  );
 const K = tok("var(--alc-code-keyword)");
 const S = tok("var(--alc-code-string)");
 const F = tok("var(--alc-code-fn)");
 const T = tok("var(--alc-code-type)");
 const V = tok("var(--alc-code-var)");
+const C = ({ children }: { children: ReactNode }) => (
+  <span style={{ color: "var(--alc-code-comment)", fontStyle: "italic" }}>
+    {children}
+  </span>
+);
 
 interface BindRow {
   id: string;
@@ -26,7 +33,8 @@ const ROWS: BindRow[] = [
     id: "get",
     call: (
       <>
-        <K>const</K> getPhoto = <K>yield</K>* <V>S3</V>.<V>GetObject</V>.<F>bind</F>(<T>Photos</T>);
+        <K>const</K> getPhoto = <K>yield</K>* <V>S3</V>.<V>GetObject</V>.
+        <F>bind</F>(<T>Photos</T>);
       </>
     ),
     resource: { label: "Photos", sub: "S3.Bucket", kind: "s3" },
@@ -36,7 +44,8 @@ const ROWS: BindRow[] = [
     id: "put",
     call: (
       <>
-        <K>const</K> putJob = <K>yield</K>* <V>DynamoDB</V>.<V>PutItem</V>.<F>bind</F>(<T>Jobs</T>);
+        <K>const</K> putJob = <K>yield</K>* <V>DynamoDB</V>.<V>PutItem</V>.
+        <F>bind</F>(<T>Jobs</T>);
       </>
     ),
     resource: { label: "Jobs", sub: "DynamoDB.Table", kind: "ddb" },
@@ -91,7 +100,9 @@ export default function BindingsToIAM() {
   const [active, setActive] = useState(-1);
 
   useEffect(() => {
-    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const reduced = window.matchMedia(
+      "(prefers-reduced-motion: reduce)",
+    ).matches;
     let timer: ReturnType<typeof setTimeout> | null = null;
     let cancelled = false;
 
@@ -127,12 +138,18 @@ export default function BindingsToIAM() {
   }, []);
 
   return (
-    <div ref={wrapRef} className="bindings-iam" data-nosnippet="">
+    <div ref={wrapRef} className="bindings-iam">
       {/* LEFT — Lambda code */}
       <div className="alc-code-block bindings-iam__code">
         <div className="alc-code-block__header">
-          <span className="alc-code-block__dot" style={{ background: "var(--alc-danger)" }} />
-          <span className="alc-code-block__dot" style={{ background: "var(--alc-warn)" }} />
+          <span
+            className="alc-code-block__dot"
+            style={{ background: "var(--alc-danger)" }}
+          />
+          <span
+            className="alc-code-block__dot"
+            style={{ background: "var(--alc-warn)" }}
+          />
           <span
             className="alc-code-block__dot"
             style={{ background: "var(--alc-accent-bright)" }}
@@ -155,8 +172,10 @@ export default function BindingsToIAM() {
                   padding: "1px 5px",
                   margin: "0 -5px",
                   borderRadius: 4,
-                  background: active === i ? "rgba(74, 110, 60, 0.22)" : "transparent",
-                  boxShadow: active === i ? "0 0 0 1px rgba(74, 110, 60, 0.55)" : "none",
+                  background:
+                    active === i ? "rgba(74, 110, 60, 0.22)" : "transparent",
+                  boxShadow:
+                    active === i ? "0 0 0 1px rgba(74, 110, 60, 0.55)" : "none",
                   transition: "background 280ms ease, box-shadow 280ms ease",
                 }}
               >
@@ -168,7 +187,8 @@ export default function BindingsToIAM() {
           {"\n    "}
           <K>return</K> {"{"}
           {"\n      "}
-          <V>fetch</V>: (<V>req</V>) {"=>"} <V>Effect</V>.<F>gen</F>(<K>function</K>* () {"{"}
+          <V>fetch</V>: (<V>req</V>) {"=>"} <V>Effect</V>.<F>gen</F>(
+          <K>function</K>* () {"{"}
           {"\n        "}
           <K>const</K> photo = <K>yield</K>* <F>getPhoto</F>({"{ "}
           <V>key</V>: <V>req</V>.<V>key</V> {"}"});
@@ -218,8 +238,12 @@ export default function BindingsToIAM() {
           {ROWS.map((r, i) => {
             const y = 50 + i * 90;
             const isActive = active === i;
-            const stroke = isActive ? "var(--alc-accent-deep)" : "var(--alc-fg-3)";
-            const marker = isActive ? "url(#bia-arrow-active)" : "url(#bia-arrow-idle)";
+            const stroke = isActive
+              ? "var(--alc-accent-deep)"
+              : "var(--alc-fg-3)";
+            const marker = isActive
+              ? "url(#bia-arrow-active)"
+              : "url(#bia-arrow-idle)";
             return (
               <g
                 key={r.id}
@@ -263,15 +287,23 @@ export default function BindingsToIAM() {
               key={r.id}
               className="bindings-iam__resource"
               style={{
-                borderColor: isActive ? "var(--alc-accent-deep)" : "var(--alc-hairline)",
-                boxShadow: isActive ? "0 0 0 2px rgba(74, 110, 60, 0.18)" : "none",
+                borderColor: isActive
+                  ? "var(--alc-accent-deep)"
+                  : "var(--alc-hairline)",
+                boxShadow: isActive
+                  ? "0 0 0 2px rgba(74, 110, 60, 0.18)"
+                  : "none",
                 transition: "border-color 280ms ease, box-shadow 280ms ease",
               }}
             >
               <ResourceIcon kind={r.resource.kind} />
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div className="bindings-iam__resource-label">{r.resource.label}</div>
-                <div className="bindings-iam__resource-sub">{r.resource.sub}</div>
+                <div className="bindings-iam__resource-label">
+                  {r.resource.label}
+                </div>
+                <div className="bindings-iam__resource-sub">
+                  {r.resource.sub}
+                </div>
                 <div
                   className="bindings-iam__resource-iam"
                   data-stream={r.arrow.kind === "stream" ? "true" : undefined}

@@ -4,7 +4,6 @@ description: Have ephemeral PR-preview stages reference a long-lived Neon or Pla
 ---
 
 import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
-import PackageManagers from "../../../../components/PackageManagers.astro";
 
 In the [Hyperdrive](/cloudflare/data/hyperdrive)
 tutorial you provisioned a `Neon.Project` and a `Neon.Branch`, then
@@ -31,9 +30,9 @@ unconditionally creates its own `Neon.Project`:
 
 ```typescript
 // src/Db.ts
-import * as Cloudflare from "@alchemy.run/cloudflare";
-import * as Drizzle from "@alchemy.run/drizzle";
-import * as Neon from "@alchemy.run/neon";
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Drizzle from "alchemy/Drizzle";
+import * as Neon from "alchemy/Neon";
 import * as Effect from "effect/Effect";
 
 export const NeonDb = Effect.gen(function* () {
@@ -48,7 +47,7 @@ export const NeonDb = Effect.gen(function* () {
 
   const branch = yield* Neon.Branch("app-branch", {
     project,
-    migrations: schema,
+    migrationsDir: schema.out,
   });
 
   return { project, branch, schema };
@@ -73,9 +72,9 @@ to every stack effect:
 
 ```diff lang="typescript"
 +import * as Alchemy from "alchemy";
- import * as Cloudflare from "@alchemy.run/cloudflare";
- import * as Drizzle from "@alchemy.run/drizzle";
- import * as Neon from "@alchemy.run/neon";
+ import * as Cloudflare from "alchemy/Cloudflare";
+ import * as Drizzle from "alchemy/Drizzle";
+ import * as Neon from "alchemy/Neon";
  import * as Effect from "effect/Effect";
 
  export const NeonDb = Effect.gen(function* () {
@@ -87,7 +86,7 @@ to every stack effect:
    });
 ```
 
-`stage` is whatever was passed to `alchemy deploy --stage <name>`
+`stage` is whatever was passed to `bun alchemy deploy --stage <name>`
 — `dev_sam`, `staging`, `prod`, or `pr-147`. We'll branch on
 `stage.startsWith("pr-")` to decide whether to create a project or
 reference one.
@@ -133,7 +132,7 @@ returned:
 ```typescript
 const branch = yield* Neon.Branch("app-branch", {
   project,
-  migrations: schema,
+  migrationsDir: schema.out,
 });
 ```
 
@@ -146,9 +145,9 @@ without paying for a whole Postgres cluster.
 ```typescript
 // src/Db.ts
 import * as Alchemy from "alchemy";
-import * as Cloudflare from "@alchemy.run/cloudflare";
-import * as Drizzle from "@alchemy.run/drizzle";
-import * as Neon from "@alchemy.run/neon";
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Drizzle from "alchemy/Drizzle";
+import * as Neon from "alchemy/Neon";
 import * as Effect from "effect/Effect";
 
 export const NeonDb = Effect.gen(function* () {
@@ -167,7 +166,7 @@ export const NeonDb = Effect.gen(function* () {
 
   const branch = yield* Neon.Branch("app-branch", {
     project,
-    migrations: schema,
+    migrationsDir: schema.out,
   });
 
   return { project, branch, schema };
@@ -186,7 +185,9 @@ export const Hyperdrive = Effect.gen(function* () {
 PR stages can only reference what `staging` has already deployed,
 so `staging` has to go first:
 
-<PackageManagers run="alchemy deploy --stage staging" />
+```sh
+bun alchemy deploy --stage staging
+```
 
 This runs the full path — creates `app-db` (the project),
 `app-branch` against it, and `app-hyperdrive` in front. The state
@@ -197,7 +198,9 @@ which is what PR stages will read against.
 
 Now deploy a PR-preview stage. The same code, different stage flag:
 
-<PackageManagers run="alchemy deploy --stage pr-147" />
+```sh
+bun alchemy deploy --stage pr-147
+```
 
 The plan is noticeably shorter:
 
@@ -221,7 +224,9 @@ under `{ stack, stage: "staging", id: "app-db" }` to read. Deploy
 
 ## Tear it down
 
-<PackageManagers run="alchemy destroy --stage pr-147" />
+```sh
+bun alchemy destroy --stage pr-147
+```
 
 Destroy removes the per-stage resources — the branch, the
 Hyperdrive, the Worker — but leaves the referenced project
@@ -261,7 +266,7 @@ export const PlanetscaleDb = Effect.gen(function* () {
 
   const branch = yield* Planetscale.PostgresBranch("app-branch", {
     database,
-    migrations: schema,
+    migrationsDir: schema.out,
   });
 
   const role = yield* Planetscale.PostgresRole("app-role", {
@@ -294,7 +299,7 @@ export const PlanetscaleDb = Effect.gen(function* () {
   const branch = yield* Planetscale.MySQLBranch("app-branch", {
     database,
     isProduction: false,
-    migrations: "./migrations",
+    migrationsDir: "./migrations",
   });
 
   const password = yield* Planetscale.MySQLPassword("app-password", {

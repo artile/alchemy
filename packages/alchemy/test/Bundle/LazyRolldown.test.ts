@@ -1,9 +1,9 @@
-import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "@alchemy.run/test";
-import * as NodeServices from "@effect/platform-node/NodeServices";
-import * as Effect from "effect/Effect";
-import { ChildProcess } from "effect/process";
 import { exec } from "@/Util/exec.ts";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { describe, expect, it } from "alchemy-test";
+import * as Effect from "effect/Effect";
+import { ChildProcess } from "effect/unstable/process";
+import { fileURLToPath } from "node:url";
 
 /**
  * Regression tests for #562: importing alchemy's CLI or provider modules
@@ -16,18 +16,18 @@ import { exec } from "@/Util/exec.ts";
  * can only be made in an isolated module registry. `process.dlopen` is
  * the choke point every native-addon load goes through, so intercepting
  * it detects the binding no matter which package (`rolldown`,
- * `rolldown/parseAst`, `@alchemy.run/cloudflare-runtime/rolldown`)
+ * `rolldown/parseAst`, `@distilled.cloud/cloudflare-rolldown-plugin`)
  * pulled it in.
  */
 
 const entries = [
-  "alchemy/src/Bundle/index.ts",
-  "alchemy/src/Cli/main.ts",
-  "cloudflare/src/index.ts",
+  "src/Bundle/index.ts",
+  "src/Cli/main.ts",
+  "src/Cloudflare/index.ts",
 ] as const;
 
 const importInSubprocess = (entry: string) => {
-  const entryPath = fileURLToPath(new URL(`../../../${entry}`, import.meta.url));
+  const entryPath = fileURLToPath(new URL(`../../${entry}`, import.meta.url));
   const script = `
     const orig = process.dlopen;
     const loaded = [];
@@ -43,20 +43,22 @@ const importInSubprocess = (entry: string) => {
     }
     console.log("no rolldown native binding loaded");
   `;
-  return exec(ChildProcess.make(process.execPath, ["-e", script], { shell: false })).pipe(
-    Effect.scoped,
-  );
+  return exec(
+    ChildProcess.make(process.execPath, ["-e", script], { shell: false }),
+  ).pipe(Effect.scoped);
 };
 
-describe("lazy rolldown (#562)", { tags: ["unit", "local"] }, () => {
+describe("lazy rolldown (#562)", () => {
   for (const entry of entries) {
-    it.effect(`importing ${entry} does not load rolldown's native binding`, () =>
-      Effect.gen(function* () {
-        const { exitCode, stdout, stderr } = yield* importInSubprocess(entry);
-        expect(stderr).toBe("");
-        expect(stdout).toContain("no rolldown native binding loaded");
-        expect(exitCode).toBe(0);
-      }).pipe(Effect.provide(NodeServices.layer)),
+    it.effect(
+      `importing ${entry} does not load rolldown's native binding`,
+      () =>
+        Effect.gen(function* () {
+          const { exitCode, stdout, stderr } = yield* importInSubprocess(entry);
+          expect(stderr).toBe("");
+          expect(stdout).toContain("no rolldown native binding loaded");
+          expect(exitCode).toBe(0);
+        }).pipe(Effect.provide(NodeServices.layer)),
     );
   }
 });

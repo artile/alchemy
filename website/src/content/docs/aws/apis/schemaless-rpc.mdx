@@ -6,8 +6,8 @@ sidebar:
 ---
 
 The pattern — what a Shape member may be, how the typed client arises, what
-crosses the wire — lives at [Schemaless RPC](/apis/schemaless). On AWS
-there is one pairing today: **Lambda → Firecracker MicroVM**,
+crosses the wire — lives at [Schemaless RPC](/apis/schemaless). This page
+covers the AWS pairings. There is one today: **Lambda → Firecracker MicroVM**,
 riding the generic fetch transport — each call is a
 `POST https://<endpoint>/__rpc__/{name}`.
 
@@ -15,9 +15,9 @@ riding the generic fetch transport — each call is a
 
 ```typescript
 // sandbox.ts — the MicroVM image
-import * as AWS from "@alchemy.run/aws";
+import * as AWS from "alchemy/AWS";
 import * as Effect from "effect/Effect";
-import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 
 export class Sandbox extends AWS.Lambda.MicrovmImage<
   Sandbox,
@@ -41,7 +41,7 @@ export default Sandbox.make(
 
 Like Containers on Cloudflare, the MicroVM image declares its Shape as an
 explicit type parameter — the caller reaches it over the network, so nothing
-can be inferred from a binding. The constructor Effect returns `{ fetch, ...rpcs }`;
+can be inferred from a binding. The init Effect returns `{ fetch, ...rpcs }`;
 the in-VM runtime serves the RPC methods over `/__rpc__/*` and falls through
 to `fetch` for everything else, so the same image answers both call surfaces.
 
