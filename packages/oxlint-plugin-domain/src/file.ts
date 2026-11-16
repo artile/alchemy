@@ -35,6 +35,7 @@ const SUFFIX_KIND: Readonly<Record<string, Kind>> = {
   saga: "Saga",
   projection: "Projection",
   stream: "Stream",
+  query: "Query",
   external: "ExternalSystem",
   api: "Api",
   model: "Model",

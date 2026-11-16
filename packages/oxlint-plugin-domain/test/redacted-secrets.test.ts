@@ -14,6 +14,9 @@ it("names", () => {
     "otp",
     "privateKey",
     "APIKey",
+    "passcode",
+    "signingKey",
+    "refreshToken",
   ]) {
     assert.ok(isSecretName(name), name);
   }
@@ -25,6 +28,14 @@ it("names", () => {
     "owner",
     "tokenizer",
     "spinCount",
+    "passcodeId",
+    "passcodeIds",
+    "tokenId",
+    "passcodeName",
+    "pinCount",
+    "passcodeCapacity",
+    "secretVersion",
+    "tokenExpiresAt",
   ]) {
     assert.ok(!isSecretName(name), name);
   }

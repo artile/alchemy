@@ -1,7 +1,7 @@
 import * as path from "node:path";
 import { PRIMARY_SUFFIX } from "../ast.ts";
 import { domainFile, isTestFile, kindOfPath } from "../file.ts";
-import { fileNoun, isMessageKind, naming, namingSchema } from "../naming.ts";
+import { fileNoun, fileNouns, isMessageKind, naming, namingSchema } from "../naming.ts";
 import type { Rule } from "../types.ts";
 
 /** `Account.aggregate.ts` → `{ noun: "Account", suffix: "aggregate" }`. */
@@ -80,7 +80,10 @@ export const blockFileName: Rule = {
             : undefined);
         if (named !== undefined) {
           const expectedSuffix = PRIMARY_SUFFIX[named.kind] ?? "rejection";
-          if (noun !== fileNoun(named.name, fileCase) || suffix !== expectedSuffix) {
+          if (
+            !fileNouns(named.name, named.kind, fileCase).includes(noun) ||
+            suffix !== expectedSuffix
+          ) {
             context.report({
               node: named.id,
               messageId: "name",

@@ -27,8 +27,35 @@ const words = (name: string) =>
     .filter(Boolean)
     .map((word) => word.toLowerCase());
 
+/**
+ * A last word that makes the name a reference to a secret, or a fact about it,
+ * not the secret: `passwordId`, `tokenIds`, `passcodeName`, `pinCount`,
+ * `secretVersion`, `tokenExpiresAt`.
+ */
+const REFERENCES = new Set([
+  "id",
+  "ids",
+  "ref",
+  "refs",
+  "name",
+  "names",
+  "label",
+  "count",
+  "capacity",
+  "length",
+  "size",
+  "source",
+  "kind",
+  "type",
+  "version",
+  "at",
+  "status",
+  "policy",
+]);
+
 export const isSecretName = (name: string): boolean => {
   const parts = words(name);
+  if (parts.length > 1 && REFERENCES.has(parts.at(-1)!)) return false;
   return (
     parts.some((part) => WORDS.has(part)) ||
     parts.some((part, i) => i > 0 && PAIRS.has(`${parts[i - 1]}${part}`)) ||
@@ -54,7 +81,8 @@ const schemaRoot = (node: Node | undefined): string | undefined => {
  *
  * A schema field named like a secret (`password`, `apiKey`, `token`,
  * `clientSecret`, `pin`, `otp`, ...) whose value is a `Schema.*` schema must
- * use `Schema.Redacted`. Only the field name is known without types, so a
+ * use `Schema.Redacted`. A name that ends in a reference word (`tokenId`,
+ * `passcodeName`, `pinCount`, `secretVersion`) is not a secret. Only the field name is known without types, so a
  * secret behind a custom schema alias is not seen; the names are configurable.
  */
 export const redactedSecrets: Rule = {

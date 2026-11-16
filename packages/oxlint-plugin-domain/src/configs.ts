@@ -3,7 +3,11 @@
  *
  * - `domainRules`: the rules that read the model exactly, for the domain
  *   package's source (enable it with `overrides[].files`, e.g.
- *   `packages/domain/src/**`).
+ *   `packages/domain/src/**`). All errors.
+ * - `layoutRules`: the file layout of layout.md (`<Noun>.<kind>.ts`, one
+ *   block per file, the id file, `.ts` extensions, no barrels). They warn, and
+ *   a codebase that keeps its own layout can leave them out without losing a
+ *   model check.
  * - `serverRules`: the rule that also holds where the model is hosted (the
  *   server package, tests): provide one Layer once.
  * - `strictRules`: rules that guess from names and text, so they can be wrong
@@ -26,6 +30,9 @@ export const domainRules: Record<string, Severity> = prefix({
   "no-cross-aggregate-import": "error",
   "policy-no-saga-wait": "error",
   "no-chained-provide": "error",
+});
+
+export const layoutRules: Record<string, Severity> = prefix({
   "block-file-name": "warn",
   "one-block-per-file": "warn",
   "aggregate-id-file": "warn",

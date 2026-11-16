@@ -6,12 +6,12 @@
  * ```ts
  * // oxlint.config.ts
  * import { defineConfig } from "oxlint";
- * import { domainRules, serverRules, strictRules } from "@alchemy.run/oxlint-plugin-domain/configs";
+ * import { domainRules, layoutRules, serverRules, strictRules } from "@alchemy.run/oxlint-plugin-domain/configs";
  *
  * export default defineConfig({
  *   jsPlugins: ["@alchemy.run/oxlint-plugin-domain"],
  *   overrides: [
- *     { files: ["packages/domain/src/**"], rules: { ...domainRules, ...strictRules } },
+ *     { files: ["packages/domain/src/**"], rules: { ...domainRules, ...layoutRules, ...strictRules } },
  *     { files: ["packages/server/src/**"], rules: serverRules },
  *   ],
  * });

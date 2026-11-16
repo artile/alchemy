@@ -44,6 +44,25 @@ export const kebabCase = (name: string): string =>
 export const fileNoun = (name: string, fileCase: FileCase): string =>
   fileCase === "kebab" ? kebabCase(name) : name;
 
+/**
+ * The nouns a block's file may start with: its name, and its name without a
+ * trailing kind word (`NotesModel` → `Notes.model.ts`, `CustomerApi` →
+ * `Customer.api.ts` or `CustomerApi.api.ts`).
+ */
+export const fileNouns = (
+  name: string,
+  kind: string,
+  fileCase: FileCase,
+): ReadonlyArray<string> => {
+  const word =
+    kind === "RequestContext" ? "Context" : kind === "ExternalSystem" ? "External" : kind;
+  const stripped =
+    name.length > word.length && name.endsWith(word) ? name.slice(0, -word.length) : undefined;
+  return stripped === undefined
+    ? [fileNoun(name, fileCase)]
+    : [fileNoun(name, fileCase), fileNoun(stripped, fileCase)];
+};
+
 const MESSAGE_KINDS: ReadonlySet<string> = new Set(["Command", "Event", "Rejection"]);
 
 /** A block a messages file may hold: a command, an event or a rejection. */

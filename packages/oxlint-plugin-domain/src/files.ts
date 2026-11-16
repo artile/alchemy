@@ -47,7 +47,7 @@ export const exists = (file: string): boolean => {
   }
 };
 
-const readText = (file: string): string | undefined => {
+export const readText = (file: string): string | undefined => {
   try {
     return fs.readFileSync(file, "utf8");
   } catch {
@@ -55,13 +55,131 @@ const readText = (file: string): string | undefined => {
   }
 };
 
-/** The file a relative import resolves to, or `undefined` (package imports are not followed). */
-export const resolveImport = (importer: string, source: string): string | undefined => {
-  if (!isRelative(source)) return undefined;
-  const base = path.resolve(path.dirname(importer), source);
+/** `x` → `x`, `x.ts`, `x.tsx`, `x/index.ts`; `x.js` → also `x.ts`. */
+const fileOf = (base: string): string | undefined => {
   const candidates = [base, `${base}.ts`, `${base}.tsx`, path.join(base, "index.ts")];
   if (base.endsWith(".js")) candidates.push(`${base.slice(0, -3)}.ts`);
   return candidates.find(isFile);
+};
+
+/**
+ * JSON with comments and trailing commas (a `tsconfig.json`), or `undefined`.
+ * Comments are removed outside strings only, so `"@/*"` stays as it is.
+ */
+export const parseJsonc = (text: string): unknown => {
+  let out = "";
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]!;
+    if (c === '"') {
+      let j = i + 1;
+      while (j < text.length && text[j] !== '"') j += text[j] === "\\" ? 2 : 1;
+      out += text.slice(i, j + 1);
+      i = j;
+    } else if (c === "/" && text[i + 1] === "/") {
+      while (i < text.length && text[i] !== "\n") i++;
+      out += "\n";
+    } else if (c === "/" && text[i + 1] === "*") {
+      i = text.indexOf("*/", i + 2);
+      if (i === -1) break;
+      i++;
+    } else out += c;
+  }
+  try {
+    return JSON.parse(out.replace(/,(\s*[}\]])/g, "$1"));
+  } catch {
+    return undefined;
+  }
+};
+
+/** One `compilerOptions.paths` entry: `"@/*": ["./src/*"]`, with absolute targets. */
+interface PathAlias {
+  readonly prefix: string;
+  readonly suffix: string;
+  readonly targets: ReadonlyArray<string>;
+}
+
+interface TsConfig {
+  readonly extends?: unknown;
+  readonly compilerOptions?: {
+    readonly baseUrl?: string;
+    readonly paths?: Readonly<Record<string, ReadonlyArray<string>>>;
+  };
+}
+
+/** The `paths` of a tsconfig, following `extends` to a relative file. */
+const tsconfigPaths = (file: string, depth = 0): ReadonlyArray<PathAlias> => {
+  const text = readText(file);
+  const json = text === undefined ? undefined : (parseJsonc(text) as TsConfig | undefined);
+  if (json === undefined || depth > 5) return [];
+  const options = json.compilerOptions ?? {};
+  if (options.paths === undefined) {
+    const parent =
+      typeof json.extends === "string" && isRelative(json.extends) ? json.extends : undefined;
+    if (parent === undefined) return [];
+    const resolved = path.resolve(path.dirname(file), parent);
+    return tsconfigPaths(resolved.endsWith(".json") ? resolved : `${resolved}.json`, depth + 1);
+  }
+  const base = path.resolve(path.dirname(file), options.baseUrl ?? ".");
+  return Object.entries(options.paths).flatMap(([pattern, targets]) => {
+    const star = pattern.indexOf("*");
+    return [
+      {
+        prefix: star === -1 ? pattern : pattern.slice(0, star),
+        suffix: star === -1 ? "" : pattern.slice(star + 1),
+        targets: (Array.isArray(targets) ? targets : []).map((target) =>
+          path.resolve(base, target),
+        ),
+      },
+    ];
+  });
+};
+
+const aliasCache = new Map<string, Cached<ReadonlyArray<PathAlias>>>();
+
+/** The path aliases of the nearest `tsconfig.json` above `file`. */
+const aliasesFor = (file: string): ReadonlyArray<PathAlias> =>
+  cached(aliasCache, path.dirname(file), () => {
+    let dir = path.dirname(file);
+    for (;;) {
+      const config = path.join(dir, "tsconfig.json");
+      if (isFile(config)) return tsconfigPaths(config);
+      const parent = path.dirname(dir);
+      if (parent === dir) return [];
+      dir = parent;
+    }
+  });
+
+/**
+ * Where a `compilerOptions.paths` alias points (`@/core/x` → `<root>/src/core/x`):
+ * the first target that names a file, else the first target, or `undefined`
+ * when no alias matches.
+ */
+export const aliasTarget = (importer: string, source: string): string | undefined => {
+  for (const alias of aliasesFor(importer)) {
+    const exact = alias.suffix === "" && !alias.prefix.endsWith("/") && alias.prefix === source;
+    const matches =
+      exact ||
+      (source.startsWith(alias.prefix) &&
+        source.endsWith(alias.suffix) &&
+        source.length >= alias.prefix.length + alias.suffix.length);
+    if (!matches) continue;
+    const middle = exact
+      ? ""
+      : source.slice(alias.prefix.length, source.length - alias.suffix.length);
+    const bases = alias.targets.map((target) => target.replace("*", middle));
+    return bases.find((base) => fileOf(base) !== undefined) ?? bases[0];
+  }
+  return undefined;
+};
+
+/**
+ * The file an import resolves to: a relative path, or a `compilerOptions.paths`
+ * alias of the nearest `tsconfig.json`. Package imports are not followed.
+ */
+export const resolveImport = (importer: string, source: string): string | undefined => {
+  if (isRelative(source)) return fileOf(path.resolve(path.dirname(importer), source));
+  const aliased = aliasTarget(importer, source);
+  return aliased === undefined ? undefined : fileOf(aliased);
 };
 
 const packageRoots = new Map<string, Cached<string | undefined>>();
@@ -123,7 +241,13 @@ export const indexText = (text: string): ModuleIndex => {
     const kind = kindOfCallee(match[3]!);
     if (kind === undefined) return;
     kinds.set(name, kind);
-    if (kind === "Command" || kind === "View" || kind === "Saga" || kind === "Stream") {
+    if (
+      kind === "Command" ||
+      kind === "View" ||
+      kind === "Saga" ||
+      kind === "Stream" ||
+      kind === "Query"
+    ) {
       const body = text.slice(match.index!, matches[i + 1]?.index ?? text.length);
       const listed = rejectsList(body);
       if (listed !== undefined) rejects.set(name, listed);
@@ -209,15 +333,17 @@ export const storyRejections = (root: string): ReadonlyMap<string, ReadonlySet<s
     return byFile;
   });
 
-const stories = new Map<string, Cached<string>>();
+const stories = new Map<string, Cached<ReadonlyArray<string>>>();
 
-/** The text of every story file of a package (files that import `@alchemy.run/domain/Story`). */
-export const storyText = (root: string): string =>
+/** The text of each story file of a package (files that import `@alchemy.run/domain/Story`). */
+export const storyTexts = (root: string): ReadonlyArray<string> =>
   cached(stories, root, () => {
     const files: Array<string> = [];
     listFiles(root, files);
     return files
       .map(readText)
-      .filter((text): text is string => text !== undefined && text.includes(STORY_IMPORT))
-      .join("\n");
+      .filter((text): text is string => text !== undefined && text.includes(STORY_IMPORT));
   });
+
+/** The text of every story file of a package, joined. */
+export const storyText = (root: string): string => storyTexts(root).join("\n");

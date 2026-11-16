@@ -17,6 +17,7 @@ The plugin is an oxlint [JS plugin](https://oxc.rs/docs/guide/usage/linter/js-pl
 import { defineConfig } from "oxlint";
 import {
   domainRules,
+  layoutRules,
   serverRules,
   strictRules,
 } from "@alchemy.run/oxlint-plugin-domain/configs";
@@ -24,7 +25,7 @@ import {
 export default defineConfig({
   jsPlugins: ["@alchemy.run/oxlint-plugin-domain"],
   overrides: [
-    { files: ["packages/domain/src/**"], rules: { ...domainRules, ...strictRules } },
+    { files: ["packages/domain/src/**"], rules: { ...domainRules, ...layoutRules, ...strictRules } },
     { files: ["packages/server/src/**"], rules: serverRules },
   ],
 });
@@ -32,7 +33,8 @@ export default defineConfig({
 
 | Set | Rules | Use on |
 | --- | --- | --- |
-| `domainRules` | The rules that read the model exactly. Errors, and warnings for file layout. | The domain package's source |
+| `domainRules` | The rules that read the model exactly. All errors. | The domain package's source |
+| `layoutRules` | The file layout of layout.md: `block-file-name`, `one-block-per-file`, `aggregate-id-file`, `relative-import-extension`, `no-barrel-file`. All warn. | The domain package's source, when it follows that layout |
 | `serverRules` | `no-chained-provide` | The server package, tests |
 | `strictRules` | `deterministic-command-ids`, `redacted-secrets`, `story-coverage`. They guess from names and text, so they can be wrong. All warn. | Optional, on top of either set |
 
@@ -50,11 +52,11 @@ Rule ids use the plugin name `alchemy-domain` (`"alchemy-domain/no-throw": "erro
 | [`no-cross-aggregate-import`](#no-cross-aggregate-import) | domain | error | SKILL.md, layout.md |
 | [`policy-no-saga-wait`](#policy-no-saga-wait) | domain | error | SKILL.md, Rules |
 | [`no-chained-provide`](#no-chained-provide) | domain, server | error | SKILL.md, Rules |
-| [`block-file-name`](#block-file-name) | domain | warn | SKILL.md, Conventions |
-| [`one-block-per-file`](#one-block-per-file) | domain | warn | SKILL.md, Conventions |
-| [`aggregate-id-file`](#aggregate-id-file) | domain | warn | SKILL.md, Conventions |
-| [`relative-import-extension`](#relative-import-extension) | domain | warn | layout.md |
-| [`no-barrel-file`](#no-barrel-file) | domain | warn | layout.md |
+| [`block-file-name`](#block-file-name) | layout | warn | SKILL.md, Conventions |
+| [`one-block-per-file`](#one-block-per-file) | layout | warn | SKILL.md, Conventions |
+| [`aggregate-id-file`](#aggregate-id-file) | layout | warn | SKILL.md, Conventions |
+| [`relative-import-extension`](#relative-import-extension) | layout | warn | layout.md |
+| [`no-barrel-file`](#no-barrel-file) | layout | warn | layout.md |
 | [`deterministic-command-ids`](#deterministic-command-ids) | strict | warn | SKILL.md, Rules |
 | [`redacted-secrets`](#redacted-secrets) | strict | warn | SKILL.md, Rules |
 | [`story-coverage`](#story-coverage) | strict | warn | SKILL.md, Checklist; testing.md |
@@ -63,7 +65,15 @@ Rule ids use the plugin name `alchemy-domain` (`"alchemy-domain/no-throw": "erro
 
 The domain package imports only `@alchemy.run/domain`, `effect` and its own files. Type-only imports of `alchemy` are allowed (a port may require `RuntimeContext`).
 
-Options: `allow` (more packages), `allowTypes` (more type-only packages, replaces `alchemy`), `allowPaths` (directories a relative import may leave the package for, absolute or relative to the working directory).
+Options: `allow` (more packages), `allowTypes` (more type-only packages, replaces `alchemy`), `allowPaths` (directories a relative import may leave the package for), `forbidPaths` (directories no import may reach, even inside the package), `boundary` (see below). Paths are absolute or relative to the working directory, and may be globs of directories (`*` is one segment, `**` any number): `"src/**/server"`.
+
+An import through a `compilerOptions.paths` alias of the nearest `tsconfig.json` (`@/billing/money`) is checked like a relative one, by the file it points to. An app that keeps each domain in a folder (`src/billing/domain/`) instead of a package sets `boundary: "domain"`: the nearest directory above the file with that name is the domain, and an import may not leave it.
+
+```ts
+// src/billing/domain/invoice.aggregate.ts, with "@/*": ["./src/*"] and boundary: "domain"
+import { InvoiceId } from "@/billing/domain/invoice.id"; // ok
+import { db } from "@/billing/server/db"; // error: leaves the domain folder
+```
 
 ```ts
 import * as Domain from "@alchemy.run/domain"; // ok
@@ -122,7 +132,7 @@ const mustBeOpen = (s: AccountState) => {
 
 ### `no-cross-aggregate-import`
 
-A file that declares an aggregate does not import another aggregate by value. Connect aggregates with a policy or a saga. Type-only imports are allowed.
+A file that declares an aggregate does not import another aggregate by value. Connect aggregates with a policy or a saga. Type-only imports are allowed, and so is an aggregate that only a policy, saga or projection declared in the same file uses (in its definition or its `toLayer(...)`).
 
 ```ts
 // Account.aggregate.ts
@@ -201,17 +211,23 @@ export * from "./Account/Account.aggregate.ts"; // warn, when the file holds not
 
 ### `deterministic-command-ids`
 
-A policy's or projection's `toLayer` reads no clock or randomness, and a `commandId` is not a constant: the handler runs at least once.
+A policy or projection handler runs at least once, so a second run must make the same ids:
+
+- randomness (`Math.random`, `crypto.randomUUID`, `Random.*`) is reported wherever the handler reads it;
+- a clock read (`Date.now`, `DateTime.now`, `Clock.*`) is reported only when it reaches an id: a `commandId`, the target of `send`, `schedule` or `start`, or a property named `id`, `key` or `<name>Id`, directly or through a local variable. Reading the time to choose what to do, or when a timer is due, is fine;
+- a constant `commandId` in `send` is reported: a target runs only the first command with an id. In `schedule` the `commandId` names the timer, so a constant there is one timer per aggregate.
 
 ```ts
 yield* accounts.send(ref, cmd, { commandId: `${envelope.stream}:${envelope.seq}` }); // ok
+yield* accounts.schedule(ref, new Remind({}), { after: "1 hour", commandId: "remind" }); // ok: the timer's name
 yield* accounts.send(ref, cmd, { commandId: crypto.randomUUID() }); // warn
+yield* accounts.send(ref, cmd, { commandId: `credit:${Date.now()}` }); // warn
 yield* accounts.send(ref, cmd, { commandId: "credit" }); // warn
 ```
 
 ### `redacted-secrets`
 
-A schema field named like a secret (`password`, `apiKey`, `token`, `clientSecret`, `pin`, `otp`, …) is `Schema.Redacted`. Options: `names` (more names), `ignore` (names to skip).
+A schema field named like a secret (`password`, `apiKey`, `token`, `clientSecret`, `pin`, `otp`, …) is `Schema.Redacted`. A name that ends in a reference word is not the secret: `tokenId`, `passcodeIds`, `passwordName`, `pinCount`, `secretVersion`, `tokenExpiresAt`. Options: `names` (more names), `ignore` (names to skip).
 
 ```ts
 { password: Schema.Redacted(Schema.String) } // ok
@@ -224,7 +240,7 @@ Each block appears in a story of its package (a test file that imports `@alchemy
 
 - a command is sent, or one of its events is built;
 - a rejection that a command or saga lists in `rejects` is built (`Story.rejected(new X())`, a saga's `Rejected` status). A rejection only a view or a read returns is skipped: Api tests cover it;
-- each `error:` an external system op declares is built and passed to `Story.fail` (a stubbed system) or `Story.failed` (a real one) for that op.
+- each `error:` an external system op declares is built and passed to `Story.fail` (a stubbed system) or `Story.failed` (a real one) for that op, or a story gives the system a test Layer whose op fails with it (the story names the system, has the op as a key or a method, and builds the error).
 
 ```ts
 // Payments.external.ts
@@ -255,7 +271,7 @@ rules: {
 
 ## Limits
 
-oxlint JS rules see one file and no types. The rules that need a second file (`rejects-listed`, `evolve-only-applies`, `no-cross-aggregate-import`, `aggregate-id-file`, `story-coverage`) read it from disk and scan its text for the shapes the skill prescribes (`export class X extends Domain.Y(...)`). They do not follow package imports or re-exports. `story-coverage` reads story text, so it does not tell `given` from `then` and does not see which branches run.
+oxlint JS rules see one file and no types. The rules that need a second file (`rejects-listed`, `evolve-only-applies`, `no-cross-aggregate-import`, `aggregate-id-file`, `story-coverage`) read it from disk and scan its text for the shapes the skill prescribes (`export class X extends Domain.Y(...)`). They follow relative imports and `compilerOptions.paths` aliases of the nearest `tsconfig.json`, not package imports or re-exports. `story-coverage` reads story text, so it does not tell `given` from `then` and does not see which branches run.
 
 ## Test
 

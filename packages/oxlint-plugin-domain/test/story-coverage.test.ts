@@ -42,6 +42,38 @@ export class FraudCheck extends Domain.ExternalSystem("FraudCheck", {
   score: { args: {}, success: {}, error: ScoreUnavailable },
 }) {}`,
     },
+    // A story gives the system a test Layer whose op fails with its declared error.
+    {
+      filename: bank("src/Ledger/Ledger.external.ts"),
+      code: `${head}export class LedgerOffline extends Domain.Rejection("LedgerOffline") {}
+export class Ledger extends Domain.ExternalSystem("Ledger", {
+  post: { args: {}, success: {}, error: LedgerOffline },
+}) {}`,
+    },
+    // A list of errors: a story that fails the op with any member covers it.
+    {
+      filename: bank("src/Ledger/Ledger.external.ts"),
+      code: `${head}export class LedgerOffline extends Domain.Rejection("LedgerOffline") {}
+export class LedgerBusy extends Domain.Rejection("LedgerBusy") {}
+export const LedgerErrors = [LedgerOffline, LedgerBusy];
+export class Ledger extends Domain.ExternalSystem("Ledger", {
+  post: { args: {}, success: {}, error: LedgerErrors },
+}) {}`,
+    },
+    {
+      filename: bank("src/Ledger/Ledger.external.ts"),
+      code: `${head}import * as Schema from "effect/Schema";
+export const LedgerErrors = Schema.Union([LedgerBusy, LedgerOffline]);
+export class Ledger extends Domain.ExternalSystem("Ledger", {
+  post: { args: {}, success: {}, error: LedgerErrors },
+}) {}`,
+    },
+    // A story helper builds it from the class: `rejection(Overdrawn, { ... })`.
+    {
+      filename: bank("src/Account/Overdrawn.rejection.ts"),
+      code: `${head}export class Overdrawn extends Domain.Rejection("Overdrawn") {}
+export class Pay extends Domain.Command("Pay", { events: [MoneyWithdrawn], rejects: [Overdrawn] }) {}`,
+    },
     // An op without a declared error needs no failing story.
     {
       filename: bank("src/Settlement/Payments.external.ts"),
@@ -52,6 +84,18 @@ export class FraudCheck extends Domain.ExternalSystem("FraudCheck", {
     },
   ],
   invalid: [
+    {
+      // The test Layer fails `post`, not `reverse`.
+      filename: bank("src/Ledger/Ledger.external.ts"),
+      code: `${head}export class LedgerOffline extends Domain.Rejection("LedgerOffline") {}
+export class Ledger extends Domain.ExternalSystem("Ledger", {
+  post: { args: {}, success: {}, error: LedgerOffline },
+  reverse: { args: {}, success: {}, error: LedgerOffline },
+}) {}`,
+      errors: [
+        { messageId: "error", data: { system: "Ledger", op: "reverse", name: "LedgerOffline" } },
+      ],
+    },
     {
       // \`FreezeAccount\` lists it in another file.
       filename: bank("src/Account/Frozen.rejection.ts"),

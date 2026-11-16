@@ -36,6 +36,21 @@ export class Session extends RpcMiddleware.Service<Session, { provides: CurrentA
       filename: bank("src/Bank.model.ts"),
       code: `${head}export class Bank extends Domain.Model("Bank", {}) {}`,
     },
+    // The name without its trailing kind word.
+    {
+      filename: bank("src/Notes.model.ts"),
+      code: `${head}export class NotesModel extends Domain.Model("Notes", {}) {}`,
+    },
+    {
+      filename: bank("src/Customer.api.ts"),
+      code: `${head}export class CustomerApi extends Domain.Api("CustomerApi", {}) {}`,
+    },
+    // A query, and a rejection that only its validate returns.
+    {
+      filename: bank("src/Account/Statement.query.ts"),
+      code: `${head}export class StatementMissing extends Domain.Rejection("StatementMissing") {}
+export class Statement extends Domain.Query("Statement", {}) {}`,
+    },
     {
       filename: bank("src/CustomerApi.api.ts"),
       code: `${head}export class CustomerApi extends Domain.Api("CustomerApi", { model: Bank, commands: ["A"] }) {}`,
@@ -61,6 +76,21 @@ export class Session extends RpcMiddleware.Service<Session, { provides: CurrentA
     },
   ],
   invalid: [
+    {
+      filename: bank("src/Account/Statements.query.ts"),
+      code: `${head}export class Statement extends Domain.Query("Statement", {}) {}`,
+      errors: [
+        {
+          messageId: "name",
+          data: {
+            kind: "Query",
+            name: "Statement",
+            expected: "Statement.query.ts",
+            actual: "Statements.query.ts",
+          },
+        },
+      ],
+    },
     {
       filename: bank("src/Account/Account.ts"),
       code: `${head}export class Account extends Domain.Aggregate("Account", {}) {}`,

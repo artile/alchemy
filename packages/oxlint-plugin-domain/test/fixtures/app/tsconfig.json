@@ -1,0 +1,8 @@
+{
+  // An app that keeps each domain in a folder, with an alias for `src`.
+  "compilerOptions": {
+    "paths": {
+      "@/*": ["./src/*"] // the alias
+    }
+  }
+}

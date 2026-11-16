@@ -11,6 +11,7 @@ export type Kind =
   | "Saga"
   | "Projection"
   | "Stream"
+  | "Query"
   | "ExternalSystem"
   | "Api"
   | "Model"
@@ -27,6 +28,7 @@ export const KINDS: ReadonlySet<string> = new Set<Kind>([
   "Saga",
   "Projection",
   "Stream",
+  "Query",
   "ExternalSystem",
   "Api",
   "Model",
@@ -43,6 +45,7 @@ export const PRIMARY_SUFFIX: Readonly<Partial<Record<Kind, string>>> = {
   Saga: "saga",
   Projection: "projection",
   Stream: "stream",
+  Query: "query",
   ExternalSystem: "external",
   Api: "api",
   Model: "model",

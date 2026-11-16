@@ -16,3 +16,7 @@ export const bank = (file: string): string =>
 /** An absolute path inside the fixture package `test/fixtures/kennel` (kebab-case file names, grouped messages files). */
 export const kennel = (file: string): string =>
   path.join(import.meta.dirname, "fixtures", "kennel", file);
+
+/** An absolute path inside the fixture app `test/fixtures/app` (a `@/*` alias, domains in `src/<name>/domain`). */
+export const app = (file: string): string =>
+  path.join(import.meta.dirname, "fixtures", "app", file);

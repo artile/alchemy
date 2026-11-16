@@ -1,7 +1,8 @@
 import { domainImports } from "../src/rules/domain-imports.ts";
-import { bank, tester } from "./tester.ts";
+import { app, bank, tester } from "./tester.ts";
 
 const filename = bank("src/Account/Thing.ts");
+const order = app("src/orders/domain/order.aggregate.ts");
 
 tester.run("domain-imports", domainImports, {
   valid: [
@@ -19,8 +20,51 @@ tester.run("domain-imports", domainImports, {
       code: `import { Stripe } from "@acme/payments";`,
       options: [{ allow: ["@acme/payments"] }],
     },
+    // An alias import inside the domain folder.
+    {
+      filename: order,
+      code: `import { OrderId } from "@/orders/domain/order.id";`,
+      options: [{ boundary: "domain" }],
+    },
+    // An alias import to a shared pure module the options allow.
+    {
+      filename: order,
+      code: `import { prefix } from "@/shared/ids";`,
+      options: [{ boundary: "domain", allowPaths: [app("src/shared")] }],
+    },
+    // Without a boundary the package is the app, so any of its folders is inside.
+    { filename: order, code: `import { db } from "@/server/db";` },
+    // A glob in allowPaths.
+    {
+      filename: order,
+      code: `import { prefix } from "@/shared/ids";`,
+      options: [{ boundary: "domain", allowPaths: ["fixtures/*/src/shared"] }],
+      cwd: import.meta.dirname,
+    },
   ],
   invalid: [
+    {
+      // A forbidden folder, even inside the package.
+      filename: order,
+      code: `import { db } from "@/server/db";`,
+      options: [{ forbidPaths: ["fixtures/**/server"] }],
+      cwd: import.meta.dirname,
+      errors: [
+        { messageId: "reaches", data: { source: "@/server/db", path: "fixtures/**/server" } },
+      ],
+    },
+    {
+      filename: order,
+      code: `import { db } from "@/server/db";`,
+      options: [{ boundary: "domain" }],
+      errors: [{ messageId: "outside", data: { source: "@/server/db" } }],
+    },
+    {
+      filename: order,
+      code: `import { db } from "../../server/db.ts";`,
+      options: [{ boundary: "domain" }],
+      errors: [{ messageId: "outside" }],
+    },
     {
       filename,
       code: `import * as Cloudflare from "@alchemy.run/cloudflare";`,

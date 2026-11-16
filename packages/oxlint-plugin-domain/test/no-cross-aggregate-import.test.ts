@@ -21,11 +21,30 @@ tester.run("no-cross-aggregate-import", noCrossAggregateImport, {
       filename: bank("src/Account/Provisioning.policy.ts"),
       code: `${head}import { Customer } from "../Customer/Customer.aggregate.ts";\nimport { Account } from "./Account.aggregate.ts";`,
     },
+    // A policy in the aggregate's file connects it to another aggregate.
+    {
+      filename,
+      code: `${head}import { Customer } from "../Customer/Customer.aggregate.ts";${body}
+export class Welcome extends Domain.Policy("Welcome", { from: Account, on: [] }) {}
+export const WelcomeLive = Welcome.toLayer(Effect.gen(function* () {
+  const customers = yield* Customer;
+  return Effect.fn(function* ({ source }) { yield* customers.send(source.id, new Greet({})); });
+}));`,
+    },
   ],
   invalid: [
     {
       filename,
       code: `${head}import { Customer } from "../Customer/Customer.aggregate.ts";${body}`,
+      errors: [{ messageId: "cross", data: { aggregate: "Account", other: "Customer" } }],
+    },
+    {
+      // Used by the aggregate itself, even with a policy in the file.
+      filename,
+      code: `${head}import { Customer } from "../Customer/Customer.aggregate.ts";
+export class Account extends Domain.Aggregate("Account", { decide: { Open: () => Customer } }) {}
+export class Welcome extends Domain.Policy("Welcome", { from: Account, on: [] }) {}
+export const WelcomeLive = Welcome.toLayer(Effect.gen(function* () { const customers = yield* Customer; }));`,
       errors: [{ messageId: "cross", data: { aggregate: "Account", other: "Customer" } }],
     },
     {

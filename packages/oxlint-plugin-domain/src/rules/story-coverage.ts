@@ -1,13 +1,32 @@
-import { type Block, arrayIdentifiers, getProperty, propertyName, unwrap } from "../ast.ts";
-import { domainFile } from "../file.ts";
-import { packageRoot, storyRejections, storyText } from "../files.ts";
+import {
+  type Block,
+  arrayIdentifiers,
+  getProperty,
+  memberPath,
+  propertyName,
+  unwrap,
+} from "../ast.ts";
+import { type DomainFile, domainFile } from "../file.ts";
+import {
+  packageRoot,
+  readText,
+  resolveImport,
+  storyRejections,
+  storyText,
+  storyTexts,
+} from "../files.ts";
 import type { Node, Rule } from "../types.ts";
 
 const escape = (name: string) => name.replace(/[$]/g, "\\$");
 
-/** `new X(`, `new X<...>(` or `X.make(`. */
+/**
+ * `new X(`, `new X<...>(`, `X.make(`, or a story helper that builds it from the
+ * class and its fields: `rejection(X, { ... })`.
+ */
 const built = (name: string) =>
-  new RegExp(`\\bnew\\s+${escape(name)}\\s*[(<]|\\b${escape(name)}\\.make\\s*\\(`);
+  new RegExp(
+    `\\bnew\\s+${escape(name)}\\s*[(<]|\\b${escape(name)}\\.make\\s*\\(|\\b[\\w$]+\\(\\s*${escape(name)}\\s*,`,
+  );
 
 /**
  * A `fail` (stubbed call) or `failed` (real call) step for `System.op`, untagged or
@@ -17,6 +36,66 @@ const failStep = (system: string, op: string) =>
   new RegExp(
     `\\bfail(?:ed)?\\s*\\(\\s*(?:(["'\`])[^"'\`]*\\1\\s*,\\s*)?${escape(system)}\\s*\\.\\s*${escape(op)}\\b`,
   );
+
+/**
+ * A story that gives the system a test Layer whose op fails with the error:
+ * the file names the system, has the op as a key or a method
+ * (`syncClock: () => Effect.fail(new Refused(...))`), and builds the error.
+ */
+const fakeFails = (text: string, system: string, op: string, error: string) =>
+  new RegExp(`\\b${escape(system)}\\b`).test(text) &&
+  new RegExp(`(?:^|[\\s{,])${escape(op)}\\s*(?::|\\()`, "m").test(text) &&
+  built(error).test(text);
+
+/** `[A, B]`, `Schema.Union([A, B])` or `Schema.Union(A, B)`: the names, or `undefined`. */
+const listedNames = (init: Node | undefined): Array<string> | undefined => {
+  const value = unwrap(init);
+  let elements: ReadonlyArray<Node | null> | undefined;
+  if (value?.type === "ArrayExpression") elements = value.elements;
+  else if (value?.type === "CallExpression" && memberPath(value.callee)?.at(-1) === "Union") {
+    const first = unwrap(value.arguments[0]);
+    elements = first?.type === "ArrayExpression" ? first.elements : value.arguments;
+  }
+  const names = (elements ?? []).flatMap((element) => {
+    const id = unwrap(element);
+    return id?.type === "Identifier" ? [id.name as string] : [];
+  });
+  return names.length > 0 ? names : undefined;
+};
+
+const UNION_TEXT = (name: string) =>
+  new RegExp(
+    `\\b(?:const|let)\\s+${escape(name)}\\s*(?::[^=]+)?=\\s*(?:Schema\\.Union\\(\\s*)?\\[?([\\w$\\s,]+?)\\]?\\s*[)\\];]`,
+  );
+
+/**
+ * The errors one declared `error:` stands for: itself, or the members of a
+ * list or union of errors (`const ConnectorErrors = [RetryLater, Refused]`),
+ * declared in this file or in the relative module it is imported from. A
+ * story covers the op when it fails it with any member.
+ */
+const errorMembers = (file: DomainFile, filename: string, name: string): ReadonlyArray<string> => {
+  for (const statement of file.program.body) {
+    const declaration =
+      statement.type === "ExportNamedDeclaration" ? statement.declaration : statement;
+    if (declaration?.type !== "VariableDeclaration") continue;
+    for (const declarator of declaration.declarations) {
+      if (declarator.id?.type === "Identifier" && declarator.id.name === name) {
+        return listedNames(declarator.init) ?? [name];
+      }
+    }
+  }
+  const binding = file.imports.get(name);
+  if (binding === undefined || binding.imported === "*") return [name];
+  const target = resolveImport(filename, binding.source);
+  const text = target === undefined ? undefined : readText(target);
+  const match = text === undefined ? null : UNION_TEXT(binding.imported).exec(text);
+  const names = match?.[1]
+    ?.split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => /^[A-Za-z_$][\w$]*$/.test(entry));
+  return names !== undefined && names.length > 0 ? names : [name];
+};
 
 /** The ops of an external system that declare an `error:` by name: `[op, error]`. */
 const declaredErrors = (block: Block): Array<readonly [string, string, Node]> => {
@@ -48,7 +127,9 @@ const declaredErrors = (block: Block): Array<readonly [string, string, Node]> =>
  *   only a view or a read returns is skipped: its `validate` runs in Api tests;
  * - each error an external system op declares is built, and a story fails
  *   that op (`Story.fail(System.op, new X(...))` for a stubbed system,
- *   `Story.failed(...)` for a real one).
+ *   `Story.failed(...)` for a real one), or a story gives the system a test
+ *   Layer whose op fails with it (the story names the system, has the op as a
+ *   key or a method, and builds the error).
  *
  * The rule reads the story files' text, so it does not tell `given` from
  * `then`, and does not see which branches run.
@@ -97,7 +178,13 @@ export const storyCoverage: Rule = {
         for (const block of blocks) {
           if (block.kind === "ExternalSystem") {
             for (const [op, error, node] of declaredErrors(block)) {
-              if (built(error).test(stories) && failStep(block.name, op).test(stories)) continue;
+              const members = errorMembers(file, context.filename, error);
+              const covered = members.some(
+                (member) =>
+                  (built(member).test(stories) && failStep(block.name, op).test(stories)) ||
+                  storyTexts(root).some((text) => fakeFails(text, block.name, op, member)),
+              );
+              if (covered) continue;
               context.report({
                 node,
                 messageId: "error",
