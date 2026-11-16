@@ -16,8 +16,6 @@
     "test": "bun test"
   },
   "dependencies": {
-    "@alchemy.run/cloudflare": "workspace:*",
-    "@alchemy.run/drizzle": "workspace:*",
     "@cloudflare/workers-types": "catalog:",
     "@effect/platform-bun": "catalog:",
     "@effect/platform-node": "catalog:",
@@ -26,7 +24,6 @@
     "effect": "catalog:"
   },
   "devDependencies": {
-    "@alchemy.run/test": "workspace:*",
     "drizzle-kit": "catalog:"
   }
 }

@@ -20,4 +20,6 @@ export const buildLayerScoped = <ROut, E, RIn>(
 export const provideLayerScoped =
   <ROut, E1, RIn>(layer: Layer.Layer<ROut, E1, RIn>) =>
   <A, E2, R>(effect: Effect.Effect<A, E2, R>) =>
-    Effect.flatMap(buildLayerScoped(layer), (context) => Effect.provideContext(effect, context));
+    Effect.flatMap(buildLayerScoped(layer), (context) =>
+      Effect.provideContext(effect, context),
+    );

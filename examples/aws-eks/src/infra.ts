@@ -1,5 +1,4 @@
-import * as AWS from "@alchemy.run/aws";
-import * as Kubernetes from "@alchemy.run/kubernetes";
+import * as AWS from "alchemy/AWS";
 import * as Effect from "effect/Effect";
 
 /**
@@ -46,13 +45,13 @@ export const EntriesTable = AWS.DynamoDB.Table("EntriesTable", {
 });
 
 /**
- * The `guestbook` namespace, applied as a RAW MANIFEST via `Kubernetes.Manifest`
+ * The `guestbook` namespace, applied as a RAW MANIFEST via `AWS.EKS.Manifest`
  * (server-side apply) — a literal Kubernetes object. Workloads reference
  * `ns.name` so they deploy after the namespace exists.
  */
 export const GuestbookNamespace = Effect.gen(function* () {
   const cluster = yield* GuestbookCluster;
-  return yield* Kubernetes.Manifest("GuestbookNamespace", {
+  return yield* AWS.EKS.Manifest("GuestbookNamespace", {
     cluster,
     manifest: {
       apiVersion: "v1",

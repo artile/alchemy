@@ -42,9 +42,10 @@ export type KeyPair = Resource<
  * replaced. `privateKey` is PEM-encoded `pkcs8` and `publicKey` is
  * PEM-encoded `spki`.
  *
+ * @resource
  *
- * ### Generating a Keypair
- * **Example:** Default ed25519 keypair
+ * @section Generating a Keypair
+ * @example Default ed25519 keypair
  * ```typescript
  * const keys = yield* KeyPair("signing-key");
  * // keys.privateKey: Redacted<string>  (PEM pkcs8)
@@ -52,7 +53,7 @@ export type KeyPair = Resource<
  * // keys.algorithm:  "ed25519"
  * ```
  *
- * **Example:** RSA keypair
+ * @example RSA keypair
  * ```typescript
  * const keys = yield* KeyPair("rsa-key", {
  *   algorithm: "rsa",
@@ -60,7 +61,7 @@ export type KeyPair = Resource<
  * });
  * ```
  *
- * **Example:** EC keypair on a named curve
+ * @example EC keypair on a named curve
  * ```typescript
  * const keys = yield* KeyPair("ec-key", {
  *   algorithm: "ec",
@@ -68,8 +69,8 @@ export type KeyPair = Resource<
  * });
  * ```
  *
- * ### Consuming the Keys
- * **Example:** Pass the private key to a Worker as a secret
+ * @section Consuming the Keys
+ * @example Pass the private key to a Worker as a secret
  * ```typescript
  * const keys = yield* KeyPair("signing-key");
  * export const Worker = Cloudflare.Worker("Worker", {
@@ -80,8 +81,6 @@ export type KeyPair = Resource<
  *   },
  * });
  * ```
- *
- * @resource
  */
 export const KeyPair = Resource<KeyPair>("Alchemy.KeyPair");
 
@@ -112,7 +111,10 @@ const generate = (
     });
     return { algorithm, privateKey, publicKey };
   }
-  const { privateKey, publicKey } = NodeCrypto.generateKeyPairSync("ed25519", pemEncoding);
+  const { privateKey, publicKey } = NodeCrypto.generateKeyPairSync(
+    "ed25519",
+    pemEncoding,
+  );
   return { algorithm, privateKey, publicKey };
 };
 

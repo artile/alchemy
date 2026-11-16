@@ -1,4 +1,4 @@
-import * as AWS from "@alchemy.run/aws";
+import * as AWS from "alchemy/AWS";
 import * as Output from "alchemy/Output";
 import * as Effect from "effect/Effect";
 
@@ -35,7 +35,9 @@ export const HyperPodInfra = Effect.gen(function* () {
         },
       ],
     },
-    managedPolicyArns: ["arn:aws:iam::aws:policy/AmazonSageMakerClusterInstanceRolePolicy"],
+    managedPolicyArns: [
+      "arn:aws:iam::aws:policy/AmazonSageMakerClusterInstanceRolePolicy",
+    ],
     inlinePolicies: {
       "lifecycle-scripts": {
         Version: "2012-10-17",
@@ -43,7 +45,10 @@ export const HyperPodInfra = Effect.gen(function* () {
           {
             Effect: "Allow",
             Action: ["s3:GetObject", "s3:ListBucket"],
-            Resource: [bucket.bucketArn, Output.interpolate`${bucket.bucketArn}/*`],
+            Resource: [
+              bucket.bucketArn,
+              Output.interpolate`${bucket.bucketArn}/*`,
+            ],
           },
         ],
       },

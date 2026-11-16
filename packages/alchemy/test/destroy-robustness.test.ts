@@ -1,10 +1,3 @@
-import { describe, expect } from "@alchemy.run/test";
-import * as Test from "@alchemy.run/test/Alchemy";
-import * as Cause from "effect/Cause";
-import * as Data from "effect/Data";
-import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
-import * as Layer from "effect/Layer";
 /**
  * Destroy robustness: a destroy (or the GC phase of a deploy) must delete
  * everything it can, aggregate every failure, and never let one bad row
@@ -19,13 +12,20 @@ import * as Layer from "effect/Layer";
  *    the provider the row cannot be deleted anyway
  *  - an attr-less row whose `read` recovery fails must not block siblings
  */
-import { onEvent, type ApplyEvent } from "@/Events.ts";
 import { MissingProviderError } from "@/Provider";
 import { Stack } from "@/Stack";
 import { State, type ResourceState } from "@/State";
-import { TestLayers, TestResource, TestResourceHooks } from "./test.resources.ts";
-
-class Refused extends Data.TaggedError("Refused")<{ message: string }> {}
+import * as Test from "@/Test/Alchemy";
+import { describe, expect } from "alchemy-test";
+import * as Cause from "effect/Cause";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Layer from "effect/Layer";
+import {
+  TestLayers,
+  TestResource,
+  TestResourceHooks,
+} from "./test.resources.ts";
 
 const { test } = Test.make({ providers: TestLayers() });
 
@@ -57,157 +57,127 @@ const hooks = (impl: {
 const failsWith = (exit: Exit.Exit<unknown, unknown>, tag: string): boolean =>
   Exit.isFailure(exit) &&
   exit.cause.reasons.some(
-    (r) => Cause.isFailReason(r) && (r.error as { _tag?: string } | undefined)?._tag === tag,
+    (r) =>
+      Cause.isFailReason(r) &&
+      (r.error as { _tag?: string } | undefined)?._tag === tag,
   );
 
-describe("destroy aggregates failures", { tags: ["unit", "local"] }, () => {
-  test.provider("a failing delete does not interrupt sibling deletions", (stack) =>
-    Effect.gen(function* () {
-      yield* stack.deploy(
-        Effect.gen(function* () {
-          yield* TestResource("A", { string: "a" });
-          yield* TestResource("B", { string: "b" });
-          yield* TestResource("C", { string: "c" });
-        }),
-      );
-
-      const exit = yield* stack.destroy().pipe(
-        Effect.provide(
-          hooks({
-            delete: (id) =>
-              id === "A"
-                ? Effect.fail(new Error("A refuses to die"))
-                : id === "B"
-                  ? // Slow sibling: before aggregation, A's failure
-                    // interrupted B mid-delete and left its row behind.
-                    Effect.sleep("150 millis")
-                  : Effect.void,
+describe("destroy aggregates failures", () => {
+  test.provider(
+    "a failing delete does not interrupt sibling deletions",
+    (stack) =>
+      Effect.gen(function* () {
+        yield* stack.deploy(
+          Effect.gen(function* () {
+            yield* TestResource("A", { string: "a" });
+            yield* TestResource("B", { string: "b" });
+            yield* TestResource("C", { string: "c" });
           }),
-        ),
-        Effect.exit,
-      );
+        );
 
-      // The destroy still fails overall...
-      expect(Exit.isFailure(exit)).toBe(true);
-      // ...but every deletable resource was deleted.
-      expect(yield* getState("B")).toBeUndefined();
-      expect(yield* getState("C")).toBeUndefined();
-      // The failed row keeps its state for the next attempt.
-      expect((yield* getState("A"))?.status).toBe("deleting");
-    }),
+        const exit = yield* stack.destroy().pipe(
+          Effect.provide(
+            hooks({
+              delete: (id) =>
+                id === "A"
+                  ? Effect.fail(new Error("A refuses to die"))
+                  : id === "B"
+                    ? // Slow sibling: before aggregation, A's failure
+                      // interrupted B mid-delete and left its row behind.
+                      Effect.sleep("150 millis")
+                    : Effect.void,
+            }),
+          ),
+          Effect.exit,
+        );
+
+        // The destroy still fails overall...
+        expect(Exit.isFailure(exit)).toBe(true);
+        // ...but every deletable resource was deleted.
+        expect(yield* getState("B")).toBeUndefined();
+        expect(yield* getState("C")).toBeUndefined();
+        // The failed row keeps its state for the next attempt.
+        expect((yield* getState("A"))?.status).toBe("deleting");
+      }),
   );
 
-  test.provider("a failed delete's status names its error", (stack) =>
-    Effect.gen(function* () {
-      yield* stack.deploy(
-        Effect.gen(function* () {
-          const a = yield* TestResource("A", { string: "a" });
-          yield* TestResource("B", { string: a.string });
-        }),
-      );
-
-      const events: ApplyEvent[] = [];
-      const exit = yield* stack.destroy().pipe(
-        onEvent((event) =>
-          Effect.sync(() => {
-            if (event.type === "apply.resource.status") events.push(event);
+  test.provider(
+    "an upstream's delete is skipped when a dependent fails",
+    (stack) =>
+      Effect.gen(function* () {
+        yield* stack.deploy(
+          Effect.gen(function* () {
+            const a = yield* TestResource("A", { string: "a" });
+            yield* TestResource("B", { string: a.string });
           }),
-        ),
-        Effect.provide(
-          hooks({
-            delete: (id) =>
-              id === "B" ? Effect.fail(new Refused({ message: "B is protected" })) : Effect.void,
-          }),
-        ),
-        Effect.exit,
-      );
+        );
 
-      expect(Exit.isFailure(exit)).toBe(true);
-      // Without the message the row reads as a bare `fail`, and the reason
-      // only shows in the cause raised once every other delete has settled.
-      expect(
-        events.flatMap((e) =>
-          e.type === "apply.resource.status" && e.status === "fail"
-            ? [{ id: e.id, message: e.message }]
-            : [],
-        ),
-      ).toEqual([{ id: "B", message: "Refused: B is protected" }]);
-    }),
+        const deleted: string[] = [];
+        const exit = yield* stack.destroy().pipe(
+          Effect.provide(
+            hooks({
+              delete: (id) =>
+                id === "B"
+                  ? Effect.fail(new Error("B refuses to die"))
+                  : Effect.sync(() => void deleted.push(id)),
+            }),
+          ),
+          Effect.exit,
+        );
+
+        expect(Exit.isFailure(exit)).toBe(true);
+        // A still has a dependent in the cloud — its physical delete must
+        // not have been attempted and its state must be retained.
+        expect(deleted).not.toContain("A");
+        expect(yield* getState("A")).toBeDefined();
+        expect(yield* getState("B")).toBeDefined();
+      }),
   );
 
-  test.provider("an upstream's delete is skipped when a dependent fails", (stack) =>
-    Effect.gen(function* () {
-      yield* stack.deploy(
-        Effect.gen(function* () {
-          const a = yield* TestResource("A", { string: "a" });
-          yield* TestResource("B", { string: a.string });
-        }),
-      );
-
-      const deleted: string[] = [];
-      const exit = yield* stack.destroy().pipe(
-        Effect.provide(
-          hooks({
-            delete: (id) =>
-              id === "B"
-                ? Effect.fail(new Error("B refuses to die"))
-                : Effect.sync(() => void deleted.push(id)),
+  test.provider(
+    "an attr-less row with failing read recovery does not block siblings",
+    (stack) =>
+      Effect.gen(function* () {
+        yield* stack.deploy(
+          Effect.gen(function* () {
+            yield* TestResource("A", { string: "a" });
           }),
-        ),
-        Effect.exit,
-      );
+        );
+        // An interrupted create: `creating` with no attr snapshot.
+        yield* seed("Zombie", {
+          instanceId,
+          providerVersion: 0,
+          logicalId: "Zombie",
+          fqn: "Zombie",
+          namespace: undefined,
+          resourceType: "Test.TestResource",
+          status: "creating",
+          props: { string: "z" },
+          attr: undefined,
+          bindings: [],
+          downstream: [],
+        });
 
-      expect(Exit.isFailure(exit)).toBe(true);
-      // A still has a dependent in the cloud — its physical delete must
-      // not have been attempted and its state must be retained.
-      expect(deleted).not.toContain("A");
-      expect(yield* getState("A")).toBeDefined();
-      expect(yield* getState("B")).toBeDefined();
-    }),
-  );
+        const exit = yield* stack.destroy().pipe(
+          Effect.provide(
+            hooks({
+              read: () => Effect.fail(new Error("read exploded")),
+              // Slow sibling so a fail-fast interruption would be observable.
+              delete: () => Effect.sleep("150 millis"),
+            }),
+          ),
+          Effect.exit,
+        );
 
-  test.provider("an attr-less row with failing read recovery does not block siblings", (stack) =>
-    Effect.gen(function* () {
-      yield* stack.deploy(
-        Effect.gen(function* () {
-          yield* TestResource("A", { string: "a" });
-        }),
-      );
-      // An interrupted create: `creating` with no attr snapshot.
-      yield* seed("Zombie", {
-        instanceId,
-        providerVersion: 0,
-        logicalId: "Zombie",
-        fqn: "Zombie",
-        namespace: undefined,
-        resourceType: "Test.TestResource",
-        status: "creating",
-        props: { string: "z" },
-        attr: undefined,
-        bindings: [],
-        downstream: [],
-      });
-
-      const exit = yield* stack.destroy().pipe(
-        Effect.provide(
-          hooks({
-            read: () => Effect.fail(new Error("read exploded")),
-            // Slow sibling so a fail-fast interruption would be observable.
-            delete: () => Effect.sleep("150 millis"),
-          }),
-        ),
-        Effect.exit,
-      );
-
-      expect(Exit.isFailure(exit)).toBe(true);
-      expect(yield* getState("A")).toBeUndefined();
-      // The unrecoverable row is retained, not silently dropped.
-      expect(yield* getState("Zombie")).toBeDefined();
-    }),
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(yield* getState("A")).toBeUndefined();
+        // The unrecoverable row is retained, not silently dropped.
+        expect(yield* getState("Zombie")).toBeDefined();
+      }),
   );
 });
 
-describe("zombie rows (no registered provider)", { tags: ["unit", "local"] }, () => {
+describe("zombie rows (no registered provider)", () => {
   const ghostRow = (fqn: string): ResourceState => ({
     instanceId,
     providerVersion: 0,
@@ -260,25 +230,29 @@ describe("zombie rows (no registered provider)", { tags: ["unit", "local"] }, ()
     }),
   );
 
-  test.provider("a deploy with a zombie orphan dies at plan time and applies nothing", (stack) =>
-    Effect.gen(function* () {
-      yield* seed("Ghost", ghostRow("Ghost"));
+  test.provider(
+    "a deploy with a zombie orphan dies at plan time and applies nothing",
+    (stack) =>
+      Effect.gen(function* () {
+        yield* seed("Ghost", ghostRow("Ghost"));
 
-      const exit = yield* stack
-        .deploy(
-          Effect.gen(function* () {
-            const a = yield* TestResource("A", { string: "a" });
-            return a.string;
-          }),
-        )
-        .pipe(Effect.exit);
+        const exit = yield* stack
+          .deploy(
+            Effect.gen(function* () {
+              const a = yield* TestResource("A", { string: "a" });
+              return a.string;
+            }),
+          )
+          .pipe(Effect.exit);
 
-      expect(diesWithMissingProvider(exit)?.resourceType).toBe("Test.Vanished");
-      // Fatal at plan time: the program was NOT applied.
-      expect(yield* getState("A")).toBeUndefined();
-      expect(yield* getState("Ghost")).toBeDefined();
+        expect(diesWithMissingProvider(exit)?.resourceType).toBe(
+          "Test.Vanished",
+        );
+        // Fatal at plan time: the program was NOT applied.
+        expect(yield* getState("A")).toBeUndefined();
+        expect(yield* getState("Ghost")).toBeDefined();
 
-      yield* clearState("Ghost");
-    }),
+        yield* clearState("Ghost");
+      }),
   );
 });

@@ -2,8 +2,7 @@ import * as EffectContext from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
-import path from "pathe";
+import * as Path from "effect/Path";
 
 export class AlchemyContext extends EffectContext.Service<
   AlchemyContext,
@@ -31,16 +30,12 @@ export class AlchemyContext extends EffectContext.Service<
   }
 >()("alchemy/Context") {}
 
-/** Use the configured runtime directory, with a relative fallback for standalone callers. */
-export const dotAlchemyDirectory = Effect.serviceOption(AlchemyContext).pipe(
-  Effect.map((context) => (Option.isSome(context) ? context.value.dotAlchemy : ".alchemy")),
-);
-
 export const AlchemyContextLive = Layer.effect(
   AlchemyContext,
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
-    const dir = path.resolve(yield* dotAlchemyDirectory);
+    const path = yield* Path.Path;
+    const dir = path.join(process.cwd(), ".alchemy");
     yield* fs.makeDirectory(dir, { recursive: true });
     return {
       dotAlchemy: dir,

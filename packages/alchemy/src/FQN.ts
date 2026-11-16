@@ -9,12 +9,14 @@ export const FQN_SEPARATOR = "/";
  * Encode an FQN for safe filesystem storage.
  * Replaces `/` (FQN separator) with `__` to avoid subdirectory creation.
  */
-export const encodeFqn = (fqn: string): string => fqn.replaceAll(FQN_SEPARATOR, "__");
+export const encodeFqn = (fqn: string): string =>
+  fqn.replaceAll(FQN_SEPARATOR, "__");
 
 /**
  * Decode a filename back to FQN.
  */
-export const decodeFqn = (filename: string): string => filename.replaceAll("__", FQN_SEPARATOR);
+export const decodeFqn = (filename: string): string =>
+  filename.replaceAll("__", FQN_SEPARATOR);
 
 /**
  * Convert a NamespaceNode chain to an array of namespace IDs, from root to leaf.
@@ -47,7 +49,10 @@ export const toPath = (ns: NamespaceNode | undefined): string[] => {
  * toFqn(undefined, "MyResource"); // "MyResource"
  * ```
  */
-export const toFqn = (ns: NamespaceNode | undefined, logicalId: string): string => {
+export const toFqn = (
+  ns: NamespaceNode | undefined,
+  logicalId: string,
+): string => {
   const path = toPath(ns);
   path.push(logicalId);
   return path.join(FQN_SEPARATOR);
@@ -62,7 +67,9 @@ export const toFqn = (ns: NamespaceNode | undefined, logicalId: string): string 
  * parseFqn("MyResource"); // { path: [], logicalId: "MyResource" }
  * ```
  */
-export const parseFqn = (fqn: string): { path: string[]; logicalId: string } => {
+export const parseFqn = (
+  fqn: string,
+): { path: string[]; logicalId: string } => {
   const parts = fqn.split(FQN_SEPARATOR);
   const logicalId = parts.pop()!;
   return { path: parts, logicalId };

@@ -2,29 +2,13 @@
 title: Migrations
 description: Apply SQL migrations and seed data to PlanetScale databases and branches as part of every deploy — ordered, hashed, tracked, and run over short-lived credentials.
 ---
-import Timeline from "../../../../components/diagrams/Timeline.astro";
 
 Every PlanetScale database and branch resource — `PostgresDatabase`,
 `PostgresBranch`, `MySQLDatabase`, `MySQLBranch` — accepts a
-a `migrations` prop: a folder of `.sql` files applied in order as part of
+`migrationsDir`: a folder of `.sql` files applied in order as part of
 every deploy. No separate migration step, no long-lived migration
 user — alchemy mints a short-lived credential for the run and deletes
 it afterwards.
-
-<Timeline
-  end={10}
-  lanes={[
-    { id: "cred", label: "credential", type: "minted for this deploy" },
-    { id: "mig", label: "pr-42", type: "branch" },
-  ]}
-  bars={[
-    { lane: "cred", start: 1, end: 8, label: "exists only now", tone: "warn" },
-    { lane: "mig", start: 1.6, end: 3.6, label: "history", tone: "default" },
-    { lane: "mig", start: 3.8, end: 7.6, label: "apply 0003_refunds" },
-  ]}
-  marks={[{ at: 1, label: "deploy starts" }, { at: 8, label: "deleted" }]}
-  caption="Each deploy mints a credential, applies only the files the branch hasn't run, and deletes the credential. No migration user outlives the deploy."
-/>
 
 ## Database vs branch
 
@@ -33,7 +17,7 @@ On a database, migrations run against the default branch:
 ```typescript
 const db = yield* Planetscale.PostgresDatabase("MyDb", {
   clusterSize: "PS_10",
-  migrations: "./migrations/postgres",
+  migrationsDir: "./migrations/postgres",
 });
 ```
 
@@ -44,7 +28,7 @@ migrates it independently:
 ```typescript
 const branch = yield* Planetscale.PostgresBranch("app-branch", {
   database: db,
-  migrations: "./migrations",
+  migrationsDir: "./migrations",
 });
 ```
 
@@ -61,66 +45,43 @@ const schema = yield* Drizzle.Schema("app-schema", {
 
 const branch = yield* Planetscale.PostgresBranch("app-branch", {
   database,
-  migrations: schema,
+  migrationsDir: schema.out,
 });
 ```
 
 ## Ordering and hashing
 
-Files are discovered recursively under the migrations directory and sorted by
+Files are discovered recursively under `migrationsDir` and sorted by
 their numeric prefix (`0001_init.sql`, `0002_users.sql`, … — Drizzle's
 timestamp prefixes work too), falling back to name order for files
 without one. Each file's contents are SHA-256 hashed and the hashes
-are persisted in the resource's state (`migrationsHashes`).
-
-Adding a new file is an in-place update: already-applied names are
-skipped and only the new file runs. Editing or deleting a file that
-has already been applied is rewritten history and cannot be replayed
-in place:
-
-- A **non-production branch** is replaced (re-forked from its parent
-  and migrated from scratch).
-- A **current or desired production branch** fails the plan. Add a
-  new forward migration instead of rewriting files that have already
-  run.
-
-Renaming an applied file without changing its contents is neither: its
-row moves to the new name and nothing is replaced. A new file must sort
-after every applied one, or the deploy fails with
-`NonLinearMigrationHistoryError`; rename it so it sorts last. See
-[Change migration history safely](/sql/effect-sql/migrations#change-migration-history-safely).
+are persisted in the resource's state (`migrationsHashes`), so adding
+a migration file — or editing an existing one — is what marks the
+resource for an update on the next deploy. When nothing changed, the
+migration step is skipped.
 
 ## The tracking table
 
-Applied migrations are recorded in Alchemy's `__alchemy_migrations`
-table (created automatically), one row per file:
+Applied migrations are recorded in an `__alchemy_migrations` table
+(created automatically), one row per file:
 
 ```sql
 CREATE TABLE IF NOT EXISTS "__alchemy_migrations" (
-  id SERIAL PRIMARY KEY,
-  hash text NOT NULL,
-  created_at bigint,
-  name text,
-  applied_at timestamp with time zone DEFAULT now()
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ```
 
-(The MySQL flavor is the same shape with MySQL types.) On each
-deploy, files whose names already appear in the table are skipped
-**and** their content hashes must still match. A hash mismatch or a
-recorded name with no local file is a hard error, unless another file
-has the same contents, which is treated as a rename.
-
-A database previously migrated with drizzle-kit or Prisma is
-[adopted automatically](/sql/effect-sql/migrations#adopting-an-existing-database):
-its old tracking table's history is copied in once and the old table
-is frozen. Use `migrations: { dir, table }` to put the bookkeeping in
-a differently-named table:
+(The MySQL flavor is the same shape with `varchar` columns.) On each
+deploy, files whose names already appear in the table are skipped.
+Use `migrationsTable` to point at a different table:
 
 ```typescript
 const db = yield* Planetscale.PostgresDatabase("MyDb", {
   clusterSize: "PS_10",
-  migrations: { dir: "./migrations/postgres", table: "my_migrations" },
+  migrationsDir: "./migrations/postgres",
+  migrationsTable: "my_migrations",
 });
 ```
 
@@ -154,7 +115,7 @@ migrations. Paths are resolved relative to the working directory:
 ```typescript
 const db = yield* Planetscale.PostgresDatabase("MyDb", {
   clusterSize: "PS_10",
-  migrations: "./migrations/postgres",
+  migrationsDir: "./migrations/postgres",
   importFiles: ["./seed/postgres.sql"],
 });
 ```

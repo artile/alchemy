@@ -7,7 +7,10 @@ import * as Scope from "effect/Scope";
  * fresh `Scope` per execution, so an entry lives exactly as long as its
  * execution and is garbage-collected with the scope object.
  */
-const caches = new WeakMap<Scope.Scope, Map<symbol, Effect.Effect<any, any, any>>>();
+const caches = new WeakMap<
+  Scope.Scope,
+  Map<symbol, Effect.Effect<any, any, any>>
+>();
 
 /**
  * Allocate a per-execution memo cell for `build`. The returned accessor runs

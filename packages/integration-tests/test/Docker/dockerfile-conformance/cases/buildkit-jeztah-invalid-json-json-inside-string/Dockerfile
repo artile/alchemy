@@ -1,2 +1,0 @@
-FROM scratch
-CMD '["echo", "Well, JSON in a string is JSON too?"]'

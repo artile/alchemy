@@ -1,26 +1,15 @@
-import * as Cloudflare from "@alchemy.run/cloudflare";
-import * as Drizzle from "@alchemy.run/drizzle";
-import * as Planetscale from "@alchemy.run/planetscale";
 import * as Alchemy from "alchemy";
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Planetscale from "alchemy/Planetscale";
 import * as Effect from "effect/Effect";
 
 /**
- * A Drizzle schema + PlanetScale MySQL database + feature branch. The
- * branch's `migrations` prop is wired to the schema resource, so
- * the provider order becomes:
- *
- *   1. `Drizzle.Schema` regenerates pending migration SQL files.
- *   2. `Planetscale.MySQLBranch` scans the directory and applies new
- *      migrations transactionally.
+ * A Drizzle schema + PlanetScale MySQL database + feature branch. Generate
+ * migrations with `bun generate:migrations`; the branch scans the checked-in
+ * migration directory and applies new files transactionally.
  */
 export const PlanetscaleDb = Effect.gen(function* () {
   const { stage } = yield* Alchemy.Stack;
-
-  const schema = yield* Drizzle.Schema("app-schema", {
-    schema: "./src/schema.ts",
-    out: "./migrations",
-    dialect: "mysql",
-  });
 
   // Stages are organised in two tiers:
   //
@@ -43,7 +32,7 @@ export const PlanetscaleDb = Effect.gen(function* () {
   const branch = yield* Planetscale.MySQLBranch("app-branch", {
     database,
     isProduction: false,
-    migrations: schema,
+    migrationsDir: "./migrations",
   });
 
   const password = yield* Planetscale.MySQLPassword("app-password", {
@@ -55,12 +44,14 @@ export const PlanetscaleDb = Effect.gen(function* () {
   return { database, branch, password };
 });
 
-export const Hyperdrive: Effect.Effect<Cloudflare.Hyperdrive.Connection, never, any> = Effect.gen(
-  function* () {
-    const { password } = yield* PlanetscaleDb;
-    return yield* Cloudflare.Hyperdrive.Connection("app-hyperdrive", {
-      origin: password.origin,
-      caching: { disabled: true },
-    });
-  },
-);
+export const Hyperdrive: Effect.Effect<
+  Cloudflare.Hyperdrive.Connection,
+  never,
+  any
+> = Effect.gen(function* () {
+  const { password } = yield* PlanetscaleDb;
+  return yield* Cloudflare.Hyperdrive.Connection("app-hyperdrive", {
+    origin: password.origin,
+    caching: { disabled: true },
+  });
+});

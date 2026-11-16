@@ -1,2 +1,2 @@
-pnpm run format
+bun format
 git update-index --again
