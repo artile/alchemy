@@ -196,6 +196,9 @@
       "path": "./packages/domain/test/types/tsconfig.json"
     },
     {
+      "path": "./packages/oxlint-plugin-domain/tsconfig.json"
+    },
+    {
       "path": "./packages/docker/tsconfig.json"
     },
     {
